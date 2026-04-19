@@ -1,0 +1,6 @@
+__pycache__/
+/datasets
+/test_results
+checkpoints/
+results/
+*.pth
