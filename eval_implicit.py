@@ -42,6 +42,10 @@ def run_inference_chunked(model, img0, img1, device, target_h=None, target_w=Non
     B, _, H, W = img0.shape
     model.init_bhwd(B, H, W, device, amp=True)
 
+    # Compute encoder/correlation/refinement once and reuse for all query chunks.
+    with torch.no_grad(), torch.amp.autocast('cuda'):
+        state = model.infer_coarse_state(img0, img1, iters_s16=4, iters_s8=7)
+
     if target_h is None:
         target_h = H
     if target_w is None:
@@ -50,43 +54,45 @@ def run_inference_chunked(model, img0, img1, device, target_h=None, target_w=Non
     total_pixels = target_h * target_w
 
     if total_pixels <= chunk_size:
-        # Small enough — run dense
+        # Small enough — one dense decode pass
         with torch.no_grad(), torch.amp.autocast('cuda'):
-            flow_list = model(img0, img1, iters_s16=4, iters_s8=7,
-                              target_h=target_h, target_w=target_w)
-        return flow_list[-1]
+            flow = model.decode_queries(state, target_h=target_h, target_w=target_w)
+        return flow
 
-    # Build dense query grid
-    ys = torch.arange(target_h, dtype=torch.float32, device=device)
-    xs = torch.arange(target_w, dtype=torch.float32, device=device)
-    if target_h != H or target_w != W:
-        ys = ys * ((H - 1) / max(target_h - 1, 1))
-        xs = xs * ((W - 1) / max(target_w - 1, 1))
-    grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
-    all_coords = torch.stack([grid_x.reshape(-1), grid_y.reshape(-1)], dim=-1)  # [N, 2]
-    all_coords = all_coords.unsqueeze(0).expand(B, -1, -1)  # [B, N, 2]
+    # Process in chunks without materializing a full dense coordinate tensor.
+    flow = torch.zeros(B, 2, target_h, target_w, device=device)
+    flow_flat = flow.permute(0, 2, 3, 1).reshape(B, total_pixels, 2)
 
-    # Process in chunks
-    all_flow = torch.zeros(B, total_pixels, 2, device=device)
+    scale_x = W / target_w
+    scale_y = H / target_h
+
     for start in range(0, total_pixels, chunk_size):
         end = min(start + chunk_size, total_pixels)
-        chunk_coords = all_coords[:, start:end, :]  # [B, chunk, 2]
+        idx = torch.arange(start, end, device=device)
+        y = idx // target_w
+        x = idx % target_w
+
+        if target_h != H or target_w != W:
+            y = (y.float() + 0.5) * scale_y - 0.5
+            x = (x.float() + 0.5) * scale_x - 0.5
+        else:
+            y = y.float()
+            x = x.float()
+
+        chunk_coords = torch.stack([x, y], dim=-1).unsqueeze(0).expand(B, -1, -1)  # [B, chunk, 2]
 
         with torch.no_grad(), torch.amp.autocast('cuda'):
-            flow_list = model(img0, img1, iters_s16=4, iters_s8=7,
-                              query_coords=chunk_coords)
-        # Last prediction is [B, chunk, 2]
-        all_flow[:, start:end, :] = flow_list[-1]
+            flow_chunk = model.decode_queries(state, query_coords=chunk_coords)
+        # decode_queries returns [B, chunk, 2] for sparse coordinates
+        flow_flat[:, start:end, :] = flow_chunk
 
-    # Reshape to dense
-    flow = all_flow.reshape(B, target_h, target_w, 2).permute(0, 3, 1, 2)  # [B, 2, H, W]
     return flow
 
 
 def main():
     device = torch.device('cuda')
-    ckpt = 'checkpoints/implicit_vkitti2/step_050000.pth'
-    out_dir = 'results/implicit_eval'
+    ckpt = 'checkpoints/neuflowv3/step_020000.pth'
+    out_dir = 'results/neuflowv3_eval'
     os.makedirs(out_dir, exist_ok=True)
 
     print(f'Loading model from {ckpt}...')

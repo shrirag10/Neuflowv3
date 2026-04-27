@@ -44,6 +44,7 @@ def validate_chairs(model, device):
         epe_list.append(epe.view(-1).numpy())
 
     epe_all = np.concatenate(epe_list)
+    epe = np.mean(epe_all)
     print("Validation Chairs EPE: %.3f" % (epe))
     results['chairs_epe'] = epe
 

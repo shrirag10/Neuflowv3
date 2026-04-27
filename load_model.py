@@ -6,7 +6,8 @@ def my_load_weights(weight_path):
 
     print('Load checkpoint: %s' % weight_path)
 
-    checkpoint = torch.load(weight_path, map_location='cuda')
+    map_location = 'cuda' if torch.cuda.is_available() else 'cpu'
+    checkpoint = torch.load(weight_path, map_location=map_location)
 
     # yolo_checkpoint = torch.load('/media/goku/data/zhiyongzhang/optical_flow/pretrained/yolo_backbone.pth', map_location='cuda')
 
@@ -39,10 +40,9 @@ def my_load_weights(weight_path):
 
 def my_freeze_model(model):
     for name, param in model.named_parameters():
-        pass
-        # if name.startswith('backbone.'):
-        #     param.requires_grad = False
-        # elif name.startswith('conv_s8.'):
-        #     param.requires_grad = True
-        # else:
-        #     param.requires_grad = False
+        # Works for both single-GPU names (implicit_decoder_module.*)
+        # and DDP names (module.implicit_decoder_module.*)
+        if 'implicit_decoder_module.' in name:
+            param.requires_grad = True
+        else:
+            param.requires_grad = False

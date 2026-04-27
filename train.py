@@ -27,6 +27,8 @@ def get_args_parser():
 
     # training
     parser.add_argument('--lr', default=1e-4, type=float)
+    parser.add_argument('--lr_backbone', default=1e-5, type=float,
+                        help='LR for backbone when using --unfreeze_all (default 1e-5)')
     parser.add_argument('--batch_size', default=32, type=int)
     parser.add_argument('--num_workers', default=8, type=int)
     parser.add_argument('--val_freq', default=1000, type=int)
@@ -51,6 +53,8 @@ def get_args_parser():
                         help='Number of random points for sparse loss')
     parser.add_argument('--adaptive_query_ratio', default=0.5, type=float,
                         help='Fraction of queries at flow-gradient edges (0=uniform, 1=all adaptive)')
+    parser.add_argument('--unfreeze_all', action='store_true',
+                        help='Unfreeze all parameters (phase 2 end-to-end fine-tuning)')
 
     return parser
 
@@ -101,9 +105,26 @@ def main(args):
     num_params = sum(p.numel() for p in model.parameters())
     print('Number of params:', num_params)
 
-    scaler = torch.cuda.amp.GradScaler()
-    optimizer = torch.optim.AdamW(model_without_ddp.parameters(), lr=args.lr,
-                                  weight_decay=1e-4)
+    scaler = torch.amp.GradScaler('cuda')
+
+    # Differential learning rates (standard transfer-learning practice):
+    #   - Decoder (new, randomly initialised) → high LR to learn quickly
+    #   - Backbone (pretrained, specialized)  → low LR to adapt gently
+    decoder_params = list(model_without_ddp.implicit_decoder_module.parameters()) \
+        if (args.implicit and hasattr(model_without_ddp, 'implicit_decoder_module')) else []
+    decoder_ids = {id(p) for p in decoder_params}
+    backbone_params = [p for p in model_without_ddp.parameters() if id(p) not in decoder_ids]
+
+    if args.implicit and decoder_params and args.unfreeze_all:
+        optimizer = torch.optim.AdamW([
+            {'params': decoder_params,  'lr': args.lr,          'name': 'decoder'},
+            {'params': backbone_params, 'lr': args.lr_backbone,  'name': 'backbone'},
+        ], weight_decay=1e-4)
+        print(f'Optimizer: decoder lr={args.lr:.1e}  backbone lr={args.lr_backbone:.1e}')
+    else:
+        optimizer = torch.optim.AdamW(model_without_ddp.parameters(), lr=args.lr,
+                                      weight_decay=1e-4)
+
 
     start_step = 0
 
@@ -113,14 +134,27 @@ def main(args):
 
         model_without_ddp.load_state_dict(state_dict, strict=args.strict_resume)
 
-        my_freeze_model(model)
+        # --- InfiniDepth-aligned init ---
+        # Always zero-init the decoder output layer regardless of freeze mode.
+        # This ensures delta_flow ≈ 0 at step 0, so the backbone sees near-zero
+        # gradients from the decoder and isn't corrupted (safe end-to-end start).
+        if args.implicit and hasattr(model_without_ddp, 'implicit_decoder_module'):
+            out_layer = model_without_ddp.implicit_decoder_module.flow_head.layers[-1]
+            torch.nn.init.zeros_(out_layer.weight)
+            torch.nn.init.zeros_(out_layer.bias)
 
-        # for name, param in model.named_parameters():
-        #     print(name, param.requires_grad)
+        # Freeze everything except decoder (legacy / ablation only).
+        # InfiniDepth trains end-to-end; use --unfreeze_all to match that.
+        if args.implicit and not args.unfreeze_all:
+            my_freeze_model(model)
 
-        torch.save({
-            'model': model_without_ddp.state_dict()
-        }, os.path.join(args.checkpoint_dir, 'step_0.pth'))
+        trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f'Trainable params: {trainable} / {sum(p.numel() for p in model.parameters())}')
+
+        if args.checkpoint_dir is not None:
+            torch.save({
+                'model': model_without_ddp.state_dict()
+            }, os.path.join(args.checkpoint_dir, 'step_0.pth'))
 
     train_dataset = build_train_dataset(args.stage)
     print('Number of training images:', len(train_dataset))
@@ -164,6 +198,8 @@ def main(args):
             train_sampler.set_epoch(epoch)
 
         for i, sample in enumerate(train_loader):
+            if total_steps >= args.num_steps:
+                break
 
             optimizer.zero_grad()
 
@@ -174,7 +210,7 @@ def main(args):
 
             model_without_ddp.init_bhwd(img1.shape[0], img1.shape[-2], img1.shape[-1], device)
 
-            with torch.cuda.amp.autocast(enabled=True):
+            with torch.amp.autocast('cuda', enabled=True):
 
                 # --- Sparse implicit training: sample coords BEFORE forward ---
                 if args.implicit and args.sparse_loss:
@@ -191,15 +227,17 @@ def main(args):
                     )  # [B, N, 2]
 
                     # --- Bilinearly sample GT flow at continuous coords ---
-                    # (integer indexing would discard the sub-pixel signal)
-                    gt_grid = query_coords.clone()
-                    gt_grid[..., 0] = 2.0 * gt_grid[..., 0] / max(W - 1, 1) - 1.0
-                    gt_grid[..., 1] = 2.0 * gt_grid[..., 1] / max(H - 1, 1) - 1.0
-                    gt_grid = gt_grid.unsqueeze(2)  # [B, N, 1, 2]
+                    # align_corners=False matches the implicit decoder's sampling convention
+                    gt_grid = query_coords.clone().float()
+                    # align_corners=False pixel-center normalization
+                    gt_grid[..., 0] = 2.0 * (gt_grid[..., 0] + 0.5) / W - 1.0
+                    gt_grid[..., 1] = 2.0 * (gt_grid[..., 1] + 0.5) / H - 1.0
+                    gt_grid.clamp_(-1 + 1e-6, 1 - 1e-6)
+                    gt_grid = gt_grid.unsqueeze(1)  # [B, 1, N, 2]  (x,y) order for grid_sample
                     gt_at_query = F.grid_sample(
                         flow_gt, gt_grid, mode='bilinear',
-                        padding_mode='border', align_corners=True,
-                    ).squeeze(-1)  # [B, 2, N]
+                        padding_mode='border', align_corners=False,
+                    ).squeeze(2)  # [B, 2, N]
 
                     flow_preds = model(img1, img2, iters_s16=4, iters_s8=7,
                                        query_coords=query_coords)
@@ -214,8 +252,8 @@ def main(args):
                             # Dense coarse predictions: bilinearly sample at query coords
                             pred_sparse = F.grid_sample(
                                 pred, gt_grid, mode='bilinear',
-                                padding_mode='border', align_corners=True,
-                            ).squeeze(-1)  # [B, 2, N]
+                                padding_mode='border', align_corners=False,
+                            ).squeeze(2)  # [B, 2, N]
                         else:
                             # Sparse prediction [B, N, 2] → [B, 2, N]
                             pred_sparse = pred.permute(0, 2, 1)
@@ -248,10 +286,12 @@ def main(args):
 
             scaler.update()
 
+            _dec_lr = optimizer.param_groups[0]['lr']
+            _bb_lr  = optimizer.param_groups[-1]['lr'] if len(optimizer.param_groups) > 1 else _dec_lr
             pbar.set_postfix(
                 epe=f"{metrics['epe']:.3f}",
-                mag=f"{metrics['mag']:.3f}",
-                lr=f"{optimizer.param_groups[-1]['lr']:.2e}",
+                dec_lr=f"{_dec_lr:.1e}",
+                bb_lr=f"{_bb_lr:.1e}",
             )
             pbar.update(1)
 
@@ -261,21 +301,26 @@ def main(args):
             if args.checkpoint_dir is not None:
                 log_path = os.path.join(args.checkpoint_dir, 'train_log.csv')
                 write_header = not os.path.exists(log_path)
+                _dec_lr = optimizer.param_groups[0]['lr']
+                _bb_lr  = optimizer.param_groups[-1]['lr'] if len(optimizer.param_groups) > 1 else _dec_lr
                 with open(log_path, 'a', newline='') as f:
                     writer = csv.writer(f)
                     if write_header:
-                        writer.writerow(['step', 'loss', 'epe', 'mag', 'lr'])
+                        writer.writerow(['step', 'loss', 'epe', 'mag', 'lr_decoder', 'lr_backbone'])
                     writer.writerow([
                         total_steps,
                         f"{loss.item():.6f}",
                         f"{metrics['epe']:.6f}",
                         f"{metrics['mag']:.6f}",
-                        f"{optimizer.param_groups[-1]['lr']:.2e}",
+                        f"{_dec_lr:.2e}",
+                        f"{_bb_lr:.2e}",
                     ])
 
-            if total_steps % args.val_freq == 0:
+            # Always checkpoint+validate on the final step too
+            is_final = total_steps >= args.num_steps
+            if total_steps % args.val_freq == 0 or is_final:
 
-                if args.local_rank == 0:
+                if args.local_rank == 0 and args.checkpoint_dir is not None:
                     checkpoint_path = os.path.join(args.checkpoint_dir, 'step_%06d.pth' % total_steps)
                     torch.save({
                         'model': model_without_ddp.state_dict()
@@ -314,17 +359,21 @@ def main(args):
 
                         counter = 0
 
-                    # Save validation results
-                    val_file = os.path.join(args.checkpoint_dir, 'val_results.txt')
-                    with open(val_file, 'a') as f:
-                        f.write('step: %06d lr: %.6f\n' % (total_steps, optimizer.param_groups[-1]['lr']))
+                    # Save validation results when a checkpoint directory is provided
+                    if args.checkpoint_dir is not None:
+                        val_file = os.path.join(args.checkpoint_dir, 'val_results.txt')
+                        with open(val_file, 'a') as f:
+                            f.write('step: %06d lr: %.6f\n' % (total_steps, optimizer.param_groups[-1]['lr']))
 
-                        for k, v in val_results.items():
-                            f.write("| %s: %.3f " % (k, v))
+                            for k, v in val_results.items():
+                                f.write("| %s: %.3f " % (k, v))
 
-                        f.write('\n\n')
+                            f.write('\n\n')
 
                 model.train()
+
+            if is_final:
+                break
 
         epoch += 1
 
