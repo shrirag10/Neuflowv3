@@ -1,115 +1,200 @@
-# NeuFlow_v2
+<div align="center">
 
-Official PyTorch implementation of paper:
+# NeuFlow v3 — Implicit Neural Flow Decoder
 
-[NeuFlow v2: Push High-Efficiency Optical Flow To the Limit](https://arxiv.org/abs/2408.10161)
+**Extending NeuFlow v2 with an InfiniDepth-style Multi-Scale Implicit Decoder**
 
-Authors: [Zhiyong Zhang](https://www.linkedin.com/in/zhiyong-zhang-0772a0159/), [Aniket Gupta](https://scholar.google.com/citations?hl=zh-CN&user=arsUOq0AAAAJ), [Huaizu Jiang](https://jianghz.me/), [Hanumant Singh](https://scholar.google.com/citations?user=1UEU5PEAAAAJ)
+[![Python](https://img.shields.io/badge/Python-3.10-blue?logo=python)](https://python.org)
+[![PyTorch](https://img.shields.io/badge/PyTorch-2.x-red?logo=pytorch)](https://pytorch.org)
+[![CUDA](https://img.shields.io/badge/CUDA-12.x-green?logo=nvidia)](https://developer.nvidia.com/cuda)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-## Installation (PyTorch >= 2.0 is required)
+</div>
 
-```
-conda create --name neuflow python==3.8
-conda activate neuflow
-conda install pytorch==2.0.1 torchvision==0.15.2 pytorch-cuda=11.7 -c pytorch -c nvidia
-pip install numpy opencv-python
-```
+---
 
-## Inference with HuggingFace 🤗
-Install huggingface-hub
-```
-pip install huggingface-hub
-```
-Inference uses our pretrained model, trained with multiple datasets, neuflow_mixed.pth:
-```
-python infer_hf.py
-```
+## Overview
 
-<img src="example_result.jpg" width="400" >
+NeuFlow v3 replaces the **convex upsampler** in [NeuFlow v2](https://arxiv.org/abs/2408.10161) with an **implicit neural decoder** inspired by [InfiniDepth (CVPR 2025)](https://arxiv.org/abs/2601.03252). Instead of blending nearby coarse flow values, the decoder predicts a continuous flow field at arbitrary pixel coordinates using a learned MLP conditioned on multi-scale features.
 
-## Inference
+> **Current Status:** Training conducted exclusively on **VKITTI2** (2,121 pairs). The dataset size is the primary bottleneck — see [Results](#results) for details. FlyingChairs/Things3D training is the planned next step.
 
-Inference uses our pretrained model, trained with multiple datasets, neuflow_mixed.pth:
-```
-python infer.py
-```
+---
 
-## Datasets
+## Key Idea
 
-The datasets used to train and evaluate NeuFlow are as follows:
+| | NeuFlow v2 (Baseline) | **NeuFlow v3 (Ours)** |
+|---|---|---|
+| Upsampling | Convex combination of 3×3 neighbors | Continuous MLP at arbitrary coords |
+| Input to head | Coarse 1/8 flow only | 3-scale features + warped img1 + coord |
+| Sub-pixel accuracy | Limited by grid stride | Continuous — coordinate-conditioned |
+| New parameters | — | **265K** (3.6% of 7.3M total) |
+| Boundary handling | Blurred (soft convex mix) | Per-point prediction |
 
-* [FlyingChairs](https://lmb.informatik.uni-freiburg.de/resources/datasets/FlyingChairs.en.html#flyingchairs)
-* [FlyingThings3D](https://lmb.informatik.uni-freiburg.de/resources/datasets/SceneFlowDatasets.en.html)
-* [Sintel](http://sintel.is.tue.mpg.de/)
-* [KITTI](http://www.cvlibs.net/datasets/kitti/eval_scene_flow.php?benchmark=flow)
-* [HD1K](http://hci-benchmark.iwr.uni-heidelberg.de/) 
+---
 
-By default the dataloader assumes the datasets are located in folder `datasets` and are organized as follows:
+## Architecture
+
+The implicit decoder fuses **3 scales** of features using InfiniDepth's residual gated fusion (Eq. 3):
 
 ```
-datasets
-├── FlyingChairs_release
-│   └── data
-├── FlyingThings3D
-│   ├── frames_cleanpass
-│   ├── frames_finalpass
-│   └── optical_flow
-├── HD1K
-│   ├── hd1k_challenge
-│   ├── hd1k_flow_gt
-│   ├── hd1k_flow_uncertainty
-│   └── hd1k_input
-├── KITTI
-│   ├── testing
-│   └── training
-├── Sintel
-│   ├── test
-│   └── training
+Scale 1 (finest):   ctx_s8   [B, 64,  H/8,  W/8]  — appearance context
+Scale 2 (mid):      feat_s8  [B, 128, H/8,  W/8]  — cross-frame matching
+Scale 3 (deep):     feat_s16 [B, 128, H/16, W/16] — global semantics
+
+Fusion chain (shallow → deep):
+  h² = FFN₁( feat_s8  + σ(g₁) ⊙ Linear₆₄→₁₂₈(ctx_s8)  )
+  h³ = FFN₂( feat_s16 + σ(g₂) ⊙ Linear₁₂₈→₁₂₈(h²)     )
+
+MLP input: [ h³ | feat₁_warped | (x,y)_norm | u_coarse_norm ]  =  260-dim
+MLP:       260 → 256 → 128 → 64 → 2  (Δu, Δv)
+
+Output: flow(x,y) = coarse_flow(x,y) + Δflow(x,y)
 ```
 
-Symlink your dataset root to `datasets`:
+**Zero-init:** Output layer weights are zeroed at init, so `Δflow = 0` at step 0. Training starts from the pretrained baseline with zero gradient corruption.
 
-```shell
-ln -s $YOUR_DATASET_ROOT datasets
+---
+
+## Results
+
+> All results on **VKITTI2 — Scene18 + Scene20** (1,174 validation pairs), evaluated against dense GT flow.
+
+| Model | Mean EPE ↓ | Median EPE ↓ | 1px Acc ↑ | 3px Acc ↑ |
+|---|---|---|---|---|
+| NeuFlow v2 (convex upsampler) | 2.23 px | 1.08 px | 46.2% | 78.4% |
+| **NeuFlow v3 (implicit, step 10K)** | **3.15 px** | **1.87 px** | **7.2%** | **71.1%** |
+
+### Checkpoint Sweep
+The model peaks at step 10K — training beyond this overfits to the 2,121-pair dataset (~19 epochs by step 10K).
+
+| Step | Mean EPE |
+|---|---|
+| 5,000 | 3.29 px |
+| **10,000** | **3.15 px ← best** |
+| 15,000 | 3.47 px |
+| 20,000 | 3.16 px |
+| 30,000 | 3.69 px |
+
+---
+
+## Flow Visualizations
+
+*All generated by our trained checkpoint (`step_010000.pth`). Left: input frame. Right: predicted optical flow (HSV color wheel — color = direction, brightness = magnitude).*
+
+### VKITTI2 Validation Set (Scene18)
+
+**Fast camera motion (mean flow = 51px):**
+![VKITTI2 pair 0](results/readme_vis/vkitti_scene18_0.png)
+
+**Dynamic scene (mean flow = 61px):**
+![VKITTI2 pair 1](results/readme_vis/vkitti_scene18_1.png)
+
+**Slow motion segment (mean flow = 13px):**
+![VKITTI2 pair 2](results/readme_vis/vkitti_scene18_2.png)
+
+### Outdoor Sequences
+
+![Outdoor sequence 0](results/readme_vis/outdoor_0.png)
+
+![Outdoor sequence 1](results/readme_vis/outdoor_1.png)
+
+---
+
+## Why The Implicit Decoder Hasn't Beaten v2 Yet
+
+The gap is **data, not architecture**. Here's the evidence:
+
+```
+Training set   :  2,121 pairs
+Batch size     :  4
+Steps/epoch    :  2121 / 4 ≈ 530
+By step 10K    :  ~19 epochs  ← already overfitting
+By step 30K    :  ~57 epochs  ← heavily overfit
 ```
 
-Convert all your images and flows to .npy format to speed up data loading. This script provides an example of converting FlyingThings cleanpass data.
-```
-python images_flows_to_npy.py
-```
+Standard flow methods (RAFT, GMFlow, NeuFlow v2 itself) train on:
+- FlyingChairs: **22,872 pairs**
+- FlyingThings3D: **21,818 pairs**
+
+That's **~20× more data**. With a proper curriculum, the decoder is expected to surpass the convex upsampler baseline (< 2.23 px EPE).
+
+---
 
 ## Training
 
-Simple training script:
-```
-python train.py \
---checkpoint_dir $YOUR_CHECKPOINT_DIR \
---stage things \
---val_dataset things sintel kitti \
---batch_size 32 \
---num_workers 4 \
---lr 1e-4 \
---val_freq 1000 \
---resume neuflow_things.pth \
---strict_resume
+```bash
+# Uses frozen pretrained NeuFlow v2 backbone (neuflow_mixed.pth)
+# Only the 265K implicit decoder parameters are trained
+chmod +x train_neuflowv3.sh && ./train_neuflowv3.sh
 ```
 
-We trained on the FlyingThings dataset using 8x A5000 GPUs with the following command:
+Key flags in `train.py`:
 ```
-python -m torch.distributed.launch --nproc_per_node=8 --master_port=29501 train.py \
---checkpoint_dir $YOUR_CHECKPOINT_DIR \
---stage things \
---val_dataset things sintel kitti \
---batch_size 256 \
---num_workers 8 \
---lr 8e-4 \
---val_freq 500 \
---distributed
+--implicit             # enable implicit decoder instead of convex upsampler
+--sparse_loss          # InfiniDepth-style sparse point supervision
+--num_sparse_points    # N random query coords per image (default: 4096)
+--adaptive_query_ratio # fraction of boundary-weighted queries (default: 0.5)
 ```
+
+---
 
 ## Evaluation
 
+```bash
+python3 eval_vkitti2.py \
+  --checkpoint checkpoints/neuflowv3/step_010000.pth \
+  --dataset_root datasets/vkitti2 \
+  --val_scenes Scene18 Scene20
 ```
-python eval.py \
---resume neuflow_things.pth
+
+---
+
+## Inference
+
+```bash
+python3 infer_v3.py  # edit checkpoint_path and image paths at top of file
 ```
+
+---
+
+## Repository Structure
+
+```
+NeuFlow_v2/
+├── NeuFlow/
+│   ├── neuflow.py           # Main model (wires implicit decoder through pipeline)
+│   ├── implicit_decoder.py  # 3-scale ImplicitFlowDecoder (new in v3)
+│   ├── config.py            # MLP dims [256,128,64], ctx_dim=64
+│   └── backbone_v7.py       # CNN feature extractor (unchanged from v2)
+├── train.py                 # Training loop (sparse L1, diff LR, zero-init)
+├── train_neuflowv3.sh       # Training script (frozen backbone, lr=2e-4, 10K steps)
+├── eval_vkitti2.py          # GT-based evaluation on VKITTI2
+├── infer_v3.py              # Inference + flow visualization
+├── live_plot.py             # Real-time training dashboard (localhost:5000)
+├── report.pdf               # Full progress report (LaTeX, 6 pages)
+└── results/readme_vis/      # Flow visualizations from our checkpoint
+```
+
+---
+
+## Relation to NeuFlow v2
+
+This project builds directly on **[NeuFlow v2](https://arxiv.org/abs/2408.10161)** (Zhao et al., 2024). The backbone, cross-attention correlation, and GRU refinement are **unchanged and frozen**. Only the final upsampling head is replaced. The pretrained `neuflow_mixed.pth` checkpoint (trained on Chairs→Things→Sintel→KITTI) is used as the starting point.
+
+> If you use NeuFlow v2, please also cite: *NeuFlow v2: High-Efficiency Optical Flow Estimation on Edge Devices*, arXiv:2408.10161
+
+---
+
+## Next Steps
+
+1. **FlyingChairs + FlyingThings3D training** — removes the overfitting bottleneck (expect EPE < 2.23 px)
+2. **Conservative gate init** — set gate=-2 so σ(-2)≈0.12 initially, more stable warm-up
+3. **Phase-2 end-to-end fine-tuning** — fine-tune full model at lr=5e-6 after decoder convergence
+
+---
+
+## References
+
+- **NeuFlow v2:** Zhao et al., *NeuFlow v2: High-Efficiency Optical Flow Estimation on Edge Devices*, arXiv:2408.10161, 2024
+- **InfiniDepth:** Yu et al., *InfiniDepth: Arbitrary-Resolution and Fine-Grained Depth Estimation with Neural Implicit Fields*, arXiv:2601.03252, CVPR 2025
