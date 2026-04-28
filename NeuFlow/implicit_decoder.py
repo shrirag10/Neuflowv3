@@ -1,33 +1,19 @@
-"""
-ImplicitFlowDecoder — mirrors InfiniDepth's local implicit decoder architecture,
-adapted for optical flow (2D vector output instead of scalar depth).
-
-InfiniDepth source: github.com/zju3dv/InfiniDepth
-  - Feature sources: ViT layers 4 (256d), 11 (512d), 23 (1024d)
-  - Fusion (Eq. 3): h^{k+1} = FFN^k( f^{k+1} + g^k ⊙ Linear(h^k) )
-    runs L-1 = 2 times, shallow→deep
-  - MLP input: fused feature h^L
-
-NeuFlow mapping (3 scales, all available from the frozen backbone):
-  Scale 1 (finest )  context_s8   64d at 1/8  — appearance / refinement context
-  Scale 2 (mid    )  feat_s8     128d at 1/8  — cross-frame matching features
-  Scale 3 (deepest)  feat_s16    128d at 1/16 — semantic / global features
-
-  Fusion chain (exactly Eq. 3, twice):
-    h1 = context_s8
-    h2 = FFN1( feat_s8  + g1 ⊙ Linear_{64→128}(h1) )
-    h3 = FFN2( feat_s16 + g2 ⊙ Linear_{128→128}(h2) )
-
-  Extra flow-specific signal (not in InfiniDepth — single-image task):
-    feat1_s8 sampled at (x + u_coarse, y + v_coarse): img1 correspondence
-
-  MLP input: cat([ h3(128d) | feat1_warped(128d) | coords_norm(2) | coarse_norm(2) ])
-             = 260d
-
-Why NOT widen to InfiniDepth's 256/512/1024d:
-  NeuFlow's CNN backbone produces 128d features. Projecting 128→256 adds
-  parameters but zero new information. The capacity ceiling is the backbone.
-"""
+# Implicit flow decoder adapted from InfiniDepth (Yu et al., 2025).
+# InfiniDepth uses ViT features (256/512/1024d) for depth — here we use
+# NeuFlow's CNN backbone features (64/128/128d) for optical flow.
+#
+# Three feature scales:
+#   ctx_s8   (64d, 1/8)  — appearance context
+#   feat_s8  (128d, 1/8) — cross-frame matching
+#   feat_s16 (128d, 1/16) — global/semantic
+#
+# Hierarchical fusion (InfiniDepth Eq. 3, applied twice):
+#   h2 = FFN1(feat_s8  + σ(g1) * Linear(ctx_s8))
+#   h3 = FFN2(feat_s16 + σ(g2) * Linear(h2))
+#
+# MLP input: [h3 | feat1_warped | (x,y)_norm | u_coarse_norm] = 260d
+# Output: delta_flow, added to bilinear-upsampled coarse flow.
+# Output layer is zero-init so the model starts identical to v2.
 
 import torch
 import torch.nn as nn
@@ -36,7 +22,7 @@ import torch.nn.functional as F
 
 class MLP(nn.Module):
 
-    def __init__(self, in_dim: int, out_dim: int, hidden_list: list):
+    def __init__(self, in_dim, out_dim, hidden_list):
         super().__init__()
         layers = []
         last = in_dim
@@ -46,22 +32,11 @@ class MLP(nn.Module):
         layers.append(nn.Linear(last, out_dim))
         self.layers = nn.Sequential(*layers)
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         return self.layers(x)
 
 
 class ImplicitFlowDecoder(nn.Module):
-    """
-    Local implicit decoder for optical flow, mirroring InfiniDepth's ImplicitHead.
-
-    Key ingredient vs. naive bilinear upsampler:
-        Continuous coordinate conditioning — the normalized query (x,y) is
-        concatenated to the MLP input, letting the network learn sub-pixel
-        refinement that is spatially aware and boundary-preserving.
-
-    MLP input: cat([fused(hidden_dim), coords_norm(2), coarse_flow_norm(2)])
-    MLP output: delta flow (pixel space), added to bilinearly upsampled coarse flow.
-    """
 
     def __init__(
         self,
@@ -78,30 +53,18 @@ class ImplicitFlowDecoder(nn.Module):
         self.feat_dim_s8  = feat_dim_s8
         self.feat_dim_ctx = feat_dim_ctx
 
-        # ------------------------------------------------------------------ #
-        # InfiniDepth Eq. 3 — 3-scale hierarchical fusion (shallow→deep):
-        #
-        #  h1 = context_s8                              (64d, finest scale)
-        #  h2 = FFN1( feat_s8  + g1 ⊙ Linear(h1) )    (128d, mid scale)
-        #  h3 = FFN2( feat_s16 + g2 ⊙ Linear(h2) )    (128d, deep scale)
-        #
-        # Two gated residual fusion steps mirror InfiniDepth's L-1=2 iterations.
-        # Gates are learnable static channel-wise scalars (not input-dependent).
-        # ------------------------------------------------------------------ #
-
-        # Scale 1 → 2: context_s8 (64d) → feat_s8 (128d)
-        self.proj_ctx  = nn.Linear(feat_dim_ctx, hidden_dim)      # Linear(h1)
-        self.gate1     = nn.Parameter(torch.ones(hidden_dim))     # g1
-        self.ffn1      = nn.Sequential(
+        # fusion: ctx_s8 -> feat_s8 -> feat_s16 (shallow to deep)
+        self.proj_ctx = nn.Linear(feat_dim_ctx, hidden_dim)
+        self.gate1    = nn.Parameter(torch.ones(hidden_dim))
+        self.ffn1     = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.GELU(),
             nn.Linear(hidden_dim * 2, hidden_dim),
         )
 
-        # Scale 2 → 3: fused_s8 (128d) → feat_s16 (128d)
-        self.proj_s8   = nn.Linear(feat_dim_s8, hidden_dim)       # Linear(h2)
-        self.gate2     = nn.Parameter(torch.ones(hidden_dim))     # g2
-        self.ffn2      = nn.Sequential(
+        self.proj_s8 = nn.Linear(feat_dim_s8, hidden_dim)
+        self.gate2   = nn.Parameter(torch.ones(hidden_dim))
+        self.ffn2    = nn.Sequential(
             nn.Linear(hidden_dim, hidden_dim * 2),
             nn.GELU(),
             nn.Linear(hidden_dim * 2, hidden_dim),
@@ -127,45 +90,14 @@ class ImplicitFlowDecoder(nn.Module):
         )  # [B, C, 1, N]
         return sampled.squeeze(2).permute(0, 2, 1)  # [B, N, C]
 
-    def _fuse_features(
-        self,
-        feat_s16: torch.Tensor,    # [B, N, 128] — deep, semantic (scale 3)
-        feat_s8:  torch.Tensor,    # [B, N, 128] — mid, matching  (scale 2)
-        ctx_s8:   torch.Tensor,    # [B, N, 64]  — fine, context  (scale 1)
-    ) -> torch.Tensor:
-        """InfiniDepth Eq. 3, applied twice (L=3 scales, L-1=2 fusion steps).
+    def _fuse_features(self, feat_s16, feat_s8, ctx_s8):
+        # InfiniDepth Eq. 3 — two gated residual fusion steps
+        h2 = self.ffn1(feat_s8 + torch.sigmoid(self.gate1) * self.proj_ctx(ctx_s8))
+        h3 = feat_s16 + torch.sigmoid(self.gate2) * self.proj_s8(h2)
+        return self.ffn2(h3)
 
-        Step 1 (finest → mid):
-            h2 = FFN1( feat_s8  + g1 ⊙ Linear_{64→128}(ctx_s8) )
-        Step 2 (mid → deepest):
-            h3 = FFN2( feat_s16 + g2 ⊙ Linear_{128→128}(h2) )
-        """
-        # Step 1: context_s8 → feat_s8
-        g1 = torch.sigmoid(self.gate1)                   # [128]
-        h2 = feat_s8 + g1 * self.proj_ctx(ctx_s8)        # [B, N, 128]
-        h2 = self.ffn1(h2)
-
-        # Step 2: fused_s8 → feat_s16
-        g2 = torch.sigmoid(self.gate2)                   # [128]
-        h3 = feat_s16 + g2 * self.proj_s8(h2)            # [B, N, 128]
-        return self.ffn2(h3)                              # [B, N, 128]
-
-    def forward(
-        self,
-        img: torch.Tensor,                          # [B, 3, H, W]  (used for device/dtype)
-        feat_s8: torch.Tensor,                      # [B, 128, H/8,  W/8]  img0 matching
-        feat1_s8: torch.Tensor,                     # [B, 128, H/8,  W/8]  img1 matching
-        feat_s16: torch.Tensor,                     # [B, 128, H/16, W/16] img0 semantic
-        ctx_s8: torch.Tensor,                       # [B,  64, H/8,  W/8]  img0 context
-        coarse_flow: torch.Tensor,                  # [B,   2, H/8,  W/8]
-        query_coords: torch.Tensor | None = None,   # [B, N, 2] full-res pixel coords (x,y)
-        target_h: int | None = None,
-        target_w: int | None = None,
-    ) -> torch.Tensor:
-        """
-        Returns:
-            [B, 2, H, W] dense flow  or  [B, N, 2] sparse flow.
-        """
+    def forward(self, img, feat_s8, feat1_s8, feat_s16, ctx_s8, coarse_flow,
+                query_coords=None, target_h=None, target_w=None):
         # Infer full-res spatial dims from feat_s8 stride (×8)
         B = feat_s8.shape[0]
         _, _, H8, W8 = feat_s8.shape
@@ -196,40 +128,31 @@ class ImplicitFlowDecoder(nn.Module):
         coords_norm[..., 1] = 2.0 * (coords_norm[..., 1] + 0.5) / H_full - 1.0
         coords_norm.clamp_(-1 + 1e-6, 1 - 1e-6)
 
-        # 1. Sample all 3 feature scales at query coords
-        f16  = self._sample_features(feat_s16, coords_norm)  # [B, N, 128] deep
-        f8   = self._sample_features(feat_s8,  coords_norm)  # [B, N, 128] mid
-        fctx = self._sample_features(ctx_s8,   coords_norm)  # [B, N,  64] finest
+        # sample all three scales
+        f16  = self._sample_features(feat_s16, coords_norm)
+        f8   = self._sample_features(feat_s8,  coords_norm)
+        fctx = self._sample_features(ctx_s8,   coords_norm)
 
-        # 2. 3-scale gated fusion (InfiniDepth Eq. 3, twice)
-        fused = self._fuse_features(f16, f8, fctx)           # [B, N, 128]
+        fused = self._fuse_features(f16, f8, fctx)
 
-        # 3. Sample coarse flow at query coords and scale to full-res pixel space
-        coarse_at_q = self._sample_features(coarse_flow, coords_norm)  # [B, N, 2]
+        # coarse flow at query points, scaled to pixel space
+        coarse_at_q = self._sample_features(coarse_flow, coords_norm)
         coarse_at_q[..., 0] = coarse_at_q[..., 0] * (W_full / W8)
         coarse_at_q[..., 1] = coarse_at_q[..., 1] * (H_full / H8)
 
-        # 4. Sample img1 features at WARPED position: (x,y) + coarse_flow
-        #    This is the core correspondence signal — what img1 looks like where
-        #    img0's pixel has moved to.  Warp in normalized [-1,1] coords:
-        #      warp_norm = coords_norm + 2 * coarse_pixel / image_size
+        # sample img1 features at the warped location
         warp_x = coords_norm[..., 0] + 2.0 * coarse_at_q[..., 0] / W_full
         warp_y = coords_norm[..., 1] + 2.0 * coarse_at_q[..., 1] / H_full
-        warped_coords = torch.stack([warp_x, warp_y], dim=-1)
-        warped_coords = warped_coords.clamp(-1 + 1e-6, 1 - 1e-6)
-        f1_warped = self._sample_features(feat1_s8, warped_coords)      # [B, N, C8]
+        warped_coords = torch.stack([warp_x, warp_y], dim=-1).clamp(-1 + 1e-6, 1 - 1e-6)
+        f1_warped = self._sample_features(feat1_s8, warped_coords)
 
-        # Normalize coarse flow for MLP input
         coarse_norm = coarse_at_q.clone().float()
-        coarse_norm[..., 0] = coarse_norm[..., 0] / W_full
-        coarse_norm[..., 1] = coarse_norm[..., 1] / H_full
+        coarse_norm[..., 0] /= W_full
+        coarse_norm[..., 1] /= H_full
 
-        # 5. MLP: [img0_fused | img1_warped | coord | coarse_flow] → delta
         mlp_in = torch.cat([fused, f1_warped, coords_norm, coarse_norm], dim=-1)
-        delta_norm = self.flow_head(mlp_in)                             # [B, N, 2]
+        delta_norm = self.flow_head(mlp_in)
 
-        # Delta is predicted in the same normalized space as coarse_norm (÷W, ÷H).
-        # Scale back to pixel space — same convention as coarse_norm.
         delta_flow = delta_norm.clone().float()
         delta_flow[..., 0] = delta_norm[..., 0] * W_full
         delta_flow[..., 1] = delta_norm[..., 1] * H_full
