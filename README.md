@@ -74,7 +74,7 @@ This runs 10k steps with frozen backbone, lr=2e-4 for the decoder, sparse L1 los
 
 To eval:
 ```bash
-python3 eval_vkitti2.py \
+python3 scripts/eval_vkitti2.py \
   --checkpoint checkpoints/neuflowv3/step_010000.pth \
   --dataset_root datasets/vkitti2 \
   --val_scenes Scene18 Scene20
@@ -95,30 +95,35 @@ The 3-scale decoder is marginally better than 2-scale when stopped at the right 
 ## Files
 
 ```
-NeuFlow/
-  implicit_decoder.py     # the new decoder
-  neuflow.py              # wires ctx_s8 through the pipeline
-  config.py               # MLP dims, feature dims
-  backbone_v7.py          # CNN encoder (unchanged from v2)
-  ...                     # rest of the original model
+NeuFlow/                  model code
+  implicit_decoder.py     the new decoder
+  neuflow.py              wires ctx_s8 through the pipeline
+  config.py, backbone_v7.py, ...
 
-data_utils/               # dataset loading, flow viz, frame utils
+data_utils/               dataset loading, flow viz, frame utils
+
+utils/                    misc utilities
+  load_model.py           checkpoint loading
+  loss.py                 loss functions
+  dist_utils.py           distributed training utils
+
+scripts/                  eval and inference
+  eval_vkitti2.py         evaluation against GT flow
+  infer_v3.py             inference + flow visualization
+  live_plot.py            live training plot on localhost:5000
+  eval_implicit.py        alternate eval
+  benchmark_edge.py       edge device benchmark
 
 docs/
-  report.pdf              # writeup
-  report.tex              # source
+  report.pdf              writeup
+  report.tex              source
 
-results/readme_vis/       # flow visualizations from our checkpoint
-test_images/              # sample input frames
+results/readme_vis/       flow visualizations from our checkpoint
+test_images/              sample input frames
 
-train.py                  # training (sparse loss, zero-init, optional diff LR)
-train_neuflowv3.sh        # training script (frozen backbone, 10k steps)
-eval_vkitti2.py           # evaluation against GT flow
-infer_v3.py               # inference + flow visualization
-live_plot.py              # live training plot on localhost:5000
-load_model.py             # checkpoint loading util
-loss.py                   # loss functions
-download_vkitti2.sh       # VKITTI2 download script
+train.py                  training entry point
+train_neuflowv3.sh        training script (frozen backbone, 10k steps)
+download_vkitti2.sh       VKITTI2 download script
 ```
 
 ---

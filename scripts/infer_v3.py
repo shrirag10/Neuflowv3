@@ -1,3 +1,5 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from glob import glob
 import os
@@ -5,7 +7,7 @@ import numpy as np
 import cv2
 from NeuFlow.neuflow import NeuFlow
 from NeuFlow.backbone_v7 import ConvBlock
-from load_model import my_load_weights
+from utils.load_model import my_load_weights
 from data_utils import flow_viz
 
 

@@ -1,3 +1,5 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 """
 benchmark_edge.py — NeuFlow v3 Edge Device Benchmark
 
@@ -18,7 +20,7 @@ import numpy as np
 import time
 import os
 import matplotlib.pyplot as plt
-from load_model import my_load_weights
+from utils.load_model import my_load_weights
 from NeuFlow.neuflow import NeuFlow
 
 # ─── Config ─────────────────────────────────────────────────────────────────

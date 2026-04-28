@@ -1,3 +1,5 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 """
 live_plot.py — Real-time training dashboard for NeuFlow v3
 Reads checkpoints/neuflowv3/train_log.csv and serves a live plot at localhost:5000

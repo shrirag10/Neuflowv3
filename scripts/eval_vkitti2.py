@@ -1,3 +1,5 @@
+import sys, os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 import numpy as np
 import argparse
@@ -7,7 +9,7 @@ from tqdm import tqdm
 
 from NeuFlow.neuflow import NeuFlow
 from data_utils import frame_utils
-from load_model import my_load_weights
+from utils.load_model import my_load_weights
 
 
 def read_vkitti2_flow(path):

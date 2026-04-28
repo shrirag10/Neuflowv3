@@ -9,11 +9,11 @@ from tqdm import tqdm
 
 from data_utils.datasets import build_train_dataset
 from NeuFlow.neuflow import NeuFlow
-from loss import flow_loss_func, sparse_flow_loss_func
+from utils.loss import flow_loss_func, sparse_flow_loss_func
 from NeuFlow.adaptive_query import adaptive_flow_query
 from data_utils.evaluate import validate_things, validate_sintel, validate_kitti, validate_viper
-from load_model import my_load_weights, my_freeze_model
-from dist_utils import get_dist_info, init_dist, setup_for_distributed
+from utils.load_model import my_load_weights, my_freeze_model
+from utils.dist_utils import get_dist_info, init_dist, setup_for_distributed
 
 
 def get_args_parser():
