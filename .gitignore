@@ -4,3 +4,13 @@ __pycache__/
 checkpoints/
 results/
 *.pth
+
+# latex build artifacts
+*.aux
+*.log
+*.out
+
+# docs build
+docs/*.aux
+docs/*.log
+docs/*.out

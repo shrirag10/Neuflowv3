@@ -95,14 +95,30 @@ The 3-scale decoder is marginally better than 2-scale when stopped at the right 
 ## Files
 
 ```
-NeuFlow/implicit_decoder.py   # the new decoder
-NeuFlow/neuflow.py            # wires ctx_s8 through the pipeline
-train.py                      # sparse loss, zero-init, optional diff LR
-train_neuflowv3.sh            # training script (frozen backbone, 10k steps)
-eval_vkitti2.py               # evaluation against GT flow
-infer_v3.py                   # inference + visualization
-live_plot.py                  # live training plot on localhost:5000
-report.pdf                    # writeup
+NeuFlow/
+  implicit_decoder.py     # the new decoder
+  neuflow.py              # wires ctx_s8 through the pipeline
+  config.py               # MLP dims, feature dims
+  backbone_v7.py          # CNN encoder (unchanged from v2)
+  ...                     # rest of the original model
+
+data_utils/               # dataset loading, flow viz, frame utils
+
+docs/
+  report.pdf              # writeup
+  report.tex              # source
+
+results/readme_vis/       # flow visualizations from our checkpoint
+test_images/              # sample input frames
+
+train.py                  # training (sparse loss, zero-init, optional diff LR)
+train_neuflowv3.sh        # training script (frozen backbone, 10k steps)
+eval_vkitti2.py           # evaluation against GT flow
+infer_v3.py               # inference + flow visualization
+live_plot.py              # live training plot on localhost:5000
+load_model.py             # checkpoint loading util
+loss.py                   # loss functions
+download_vkitti2.sh       # VKITTI2 download script
 ```
 
 ---
