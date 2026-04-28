@@ -107,7 +107,7 @@ Total new parameters: 265K out of 7.3M.
 
 I trained with frozen backbone, lr $= 2\times10^{-4}$ for the decoder only, AdamW, batch size 4. Loss is sparse L1 on $N=4096$ randomly sampled query points per image, supervised by bilinearly interpolated GT flow --- same as InfiniDepth's Eq.~7.
 
-The training set is VKITTI2 (2,121 pairs), using Scenes 18 and 20 as validation (1,174 pairs). This is the most significant limitation, which I'll get to shortly.
+The training set is VKITTI2 (2,121 pairs). I used Scenes 18 and 20 as the validation split (1,174 pairs) and everything else for training. The reason for picking those two specifically is that VKITTI2 has 5 scene variants per scene (clone, fog, rain, etc.) and Scenes 18 and 20 together cover a good range of motion magnitudes --- slow ego-motion and faster sequences --- so they give a more representative EPE number than just picking one. They're also completely held out from training, which matters when the training set is this small.
 
 \begin{algorithm}[H]
 \caption{Training loop (simplified)}
