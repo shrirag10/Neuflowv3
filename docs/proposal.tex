@@ -1,0 +1,163 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage{url}
+\usepackage{hyperref}
+
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    citecolor=blue,
+    urlcolor=blue
+}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{NeuFlow v3: Replacing the Convex Upsampler with an Implicit Neural Decoder}
+
+\author{
+    \IEEEauthorblockN{Shriman Raghav Srinivasan}
+    \IEEEauthorblockA{
+        \textit{Master's Project} \\
+        \href{mailto:srinivasan.shrim@northeastern.edu}{srinivasan.shrim@northeastern.edu}
+    }
+}
+
+\maketitle
+
+\begin{abstract}
+\textit{Note: This is a preliminary proposal. The project is actively in progress and the ideas, experiments, and results are continuously evolving.}
+
+I built NeuFlow v3 by swapping the convex upsampler in NeuFlow v2~\cite{neuflowv2} with a small coordinate-conditioned MLP, borrowing the idea from InfiniDepth~\cite{infidepth}, which does the same thing for depth estimation. The decoder takes multi-scale features and a pixel coordinate as input and predicts a residual flow correction on top of what the GRU already outputs. I have trained it on VKITTI2 so far (~2100 pairs) and it is not beating v2 yet. The model overfits quickly at this data scale. The architecture itself works fine; the bottleneck is training data.
+\end{abstract}
+
+\begin{IEEEkeywords}
+optical flow, implicit neural representation, real-time inference, deep learning, coordinate networks
+\end{IEEEkeywords}
+
+% ---------------------------------------------
+\section{Introduction}
+
+NeuFlow v2~\cite{neuflowv2} runs a CNN encoder, cross-attention matching, and a GRU refinement loop, then recovers full-resolution flow using convex upsampling: blending nearby coarse values with learned weights. That works, but it cannot produce sharp motion boundaries because you are fundamentally limited to blending neighbors.
+
+InfiniDepth~\cite{infidepth} takes a different approach for depth: a small MLP is queried at any pixel coordinate, conditioned on latent features, and predicts the value there directly. Boundaries come out sharper. I am applying the same idea to optical flow in NeuFlow v3, with one addition: warped frame-1 features are also fed in so the decoder has cross-frame correspondence information, which a single-image depth model does not need.
+
+% ---------------------------------------------
+\section{What Changed From v2}
+
+\subsection{Architecture}
+
+The backbone (CNN encoder, cross-attention, GRU refinement) is completely frozen and unchanged. Only the upsampling head is replaced. This was not the original plan: I tried end-to-end training with differential learning rates (backbone $1 \times 10^{-5}$, decoder $2 \times 10^{-4}$) and it completely diverged, with EPE oscillating between 1\,px and 100\,px throughout training. InfiniDepth needed 800k steps on 8 GPUs to stabilize joint training. With a 30k step budget on one GPU it does not work. Frozen backbone is the only stable option at this compute scale.
+
+\subsection{Hierarchical Gated Feature Fusion}
+
+The decoder gets features from three points in the frozen backbone:
+\begin{itemize}
+    \item $\mathbf{f}_{\text{ctx}} \in \mathbb{R}^{64}$: context features from frame 0 at $\tfrac{1}{8}$ res;
+    \item $\mathbf{f}_{\text{s8}} \in \mathbb{R}^{128}$: matching features at $\tfrac{1}{8}$ res;
+    \item $\mathbf{f}_{\text{s16}} \in \mathbb{R}^{128}$: matching features at $\tfrac{1}{16}$ res.
+\end{itemize}
+These are fused hierarchically (shallow to deep) using the gated residual scheme from InfiniDepth:
+\begin{equation}
+    \mathbf{z} = \sigma(\mathbf{W}_g \mathbf{f}_{\text{deep}} + \mathbf{b}_g) \odot \mathbf{f}_{\text{shallow}} + \mathbf{f}_{\text{deep}},
+\end{equation}
+The fused feature, plus the normalized query coordinate $(u, v)$ and warped frame-1 features, goes into a 3-layer MLP that outputs a residual correction $\Delta\mathbf{f}$. The output layer is zero-initialized, so at step 0 the model is identical to v2.
+
+\subsection{Training Setup}
+
+Loss is sparse $\ell_1$ over 4096 randomly sampled coordinates per image, which avoids the memory cost of dense supervision. Decoder lr: $2 \times 10^{-4}$, batch size 4, 10k steps on VKITTI2 (~2100 training pairs).
+
+% ---------------------------------------------
+\section{Results So Far}
+\label{sec:results}
+
+v3 is not beating v2 yet. Table~\ref{tab:results} shows the gap on VKITTI2 Scenes 18 and 20 (1174 validation pairs). At batch size 4 over 2100 pairs, 10k steps is already ~19 epochs. The model peaks there and then overfits, as the checkpoint sweep in Table~\ref{tab:sweep} shows. Training longer consistently makes it worse. FlyingChairs training is the obvious fix.
+
+\begin{table}[h]
+\centering
+\caption{VKITTI2 Evaluation (Scenes 18 \& 20)}
+\label{tab:results}
+\begin{tabular}{lccc}
+\toprule
+\textbf{Model} & \textbf{Mean EPE} & \textbf{1px Acc.} & \textbf{3px Acc.} \\
+\midrule
+NeuFlow v2~\cite{neuflowv2}   & 2.23 px & 46.2\% & 78.4\% \\
+NeuFlow v3 (10k steps)        & 3.15 px & \phantom{0}7.2\% & 71.1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{NeuFlow v3 Checkpoint Sweep (Mean EPE)}
+\label{tab:sweep}
+\begin{tabular}{cc}
+\toprule
+\textbf{Step} & \textbf{Mean EPE} \\
+\midrule
+5k           & 3.29 px \\
+\textbf{10k} & \textbf{3.15 px} \\
+15k          & 3.47 px \\
+20k          & 3.16 px \\
+25k          & 3.56 px \\
+30k          & 3.69 px \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Scale ablation.} I also tested a 2-scale decoder (without $\mathbf{f}_{\text{s16}}$): best EPE was 3.20 px, marginally worse than the 3-scale version (3.15 px). The difference is small enough that the training data size is clearly the limiting factor, not the number of feature scales.
+
+% ---------------------------------------------
+\section{Proposed Next Steps}
+
+\textbf{Training data.} The standard curriculum for optical flow (FlyingChairs, then FlyingThings3D, then VKITTI2) should fix the overfitting problem. This is the most important next step, and I expect EPE to drop below the v2 baseline once the decoder has seen enough variety.
+
+\textbf{Benchmarks.} Once properly trained, evaluation on MPI-Sintel and KITTI-15 would give a clearer picture of where v3 actually stands relative to the field.
+
+\textbf{MLP ablation.} The 2-vs-3-scale comparison is already done (Section~\ref{sec:results}). Still need to check whether MLP depth and hidden width matter once training data is no longer the bottleneck.
+
+\textbf{End-to-end fine-tuning.} Jointly training the backbone and decoder is likely the highest-upside direction, but it requires multi-GPU compute. On one GPU with a 30k step budget it does not converge.
+
+\textbf{High-Performance Compute (HPC) access.} This is the critical blocker. Running FlyingChairs/Things3D training and any serious end-to-end fine-tuning is beyond what a personal workstation can handle. I am asking for guidance on accessing the university cluster or any institutional compute allocation to unblock these next steps.
+
+% ---------------------------------------------
+\section{Conclusion}
+
+I replaced the convex upsampler in NeuFlow v2 with a coordinate-conditioned implicit decoder and got the training stable under a frozen backbone. The decoder runs and produces reasonable flow, but it is not beating v2 yet because 2100 training pairs is not enough. That is a data problem, not an architecture problem. The next step is clear: train on FlyingChairs and FlyingThings3D, which needs HPC access I do not have right now. This document captures where things stand. The project is still actively developing and I am looking for feedback on direction, compute resources, and whether this is worth pushing toward a publication.
+
+% ---------------------------------------------
+\begin{thebibliography}{9}
+
+\bibitem{neuflowv2}
+S.~Zhao, L.~Zhao, Z.~Zhang, E.~Zhou, and D.~Metaxas,
+``NeuFlow v2: High-Efficiency Optical Flow Estimation on Edge Devices,''
+\textit{arXiv:2408.10161}, 2024.
+
+\bibitem{infidepth}
+Z.~Yu \textit{et al.},
+``InfiniDepth: Continuous Monocular Depth via Implicit Neural Representation,''
+\textit{arXiv:2601.03252}, 2025.
+
+\bibitem{nerf}
+B.~Mildenhall \textit{et al.},
+``NeRF: Representing Scenes as Neural Radiance Fields for View Synthesis,''
+\textit{ECCV}, 2020.
+
+\bibitem{siren}
+V.~Sitzmann, J.~Martel, A.~Bergman, D.~Lindell, and G.~Wetzstein,
+``Implicit Neural Representations with Periodic Activation Functions,''
+\textit{NeurIPS}, 2020.
+
+\end{thebibliography}
+
+\end{document}

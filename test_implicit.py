@@ -23,7 +23,7 @@ def test_shape_and_gradients():
     print("TEST 1: Shape correctness + gradient flow (implicit mode)")
     print("=" * 60)
 
-    B, H, W = 2, 256, 384  # Small for testing
+    B, H, W = 1, 128, 192  # Small dense local-window smoke test
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
     model = NeuFlow(use_implicit=True).to(device)
@@ -135,8 +135,7 @@ def test_sparse_loss():
     print("TEST 4: Sparse flow loss function")
     print("=" * 60)
 
-    sys.path.insert(0, '.')
-    from loss import sparse_flow_loss_func, flow_loss_func
+    from utils.loss import sparse_flow_loss_func, flow_loss_func
 
     B, H, W = 2, 64, 96
     device = 'cuda' if torch.cuda.is_available() else 'cpu'

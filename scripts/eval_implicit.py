@@ -42,10 +42,11 @@ def load_model(checkpoint_path, device):
 def run_inference_chunked(model, img0, img1, device, target_h=None, target_w=None, chunk_size=65536):
     """Run inference with chunked sparse queries to avoid OOM at high resolutions."""
     B, _, H, W = img0.shape
-    model.init_bhwd(B, H, W, device, amp=True)
+    amp_enabled = device.type == 'cuda'
+    model.init_bhwd(B, H, W, device, amp=amp_enabled)
 
     # Compute encoder/correlation/refinement once and reuse for all query chunks.
-    with torch.no_grad(), torch.amp.autocast('cuda'):
+    with torch.no_grad(), torch.amp.autocast(device_type=device.type, enabled=amp_enabled):
         state = model.infer_coarse_state(img0, img1, iters_s16=4, iters_s8=7)
 
     if target_h is None:
@@ -57,7 +58,7 @@ def run_inference_chunked(model, img0, img1, device, target_h=None, target_w=Non
 
     if total_pixels <= chunk_size:
         # Small enough — one dense decode pass
-        with torch.no_grad(), torch.amp.autocast('cuda'):
+        with torch.no_grad(), torch.amp.autocast(device_type=device.type, enabled=amp_enabled):
             flow = model.decode_queries(state, target_h=target_h, target_w=target_w)
         return flow
 
@@ -83,7 +84,7 @@ def run_inference_chunked(model, img0, img1, device, target_h=None, target_w=Non
 
         chunk_coords = torch.stack([x, y], dim=-1).unsqueeze(0).expand(B, -1, -1)  # [B, chunk, 2]
 
-        with torch.no_grad(), torch.amp.autocast('cuda'):
+        with torch.no_grad(), torch.amp.autocast(device_type=device.type, enabled=amp_enabled):
             flow_chunk = model.decode_queries(state, query_coords=chunk_coords)
         # decode_queries returns [B, chunk, 2] for sparse coordinates
         flow_flat[:, start:end, :] = flow_chunk
@@ -92,7 +93,7 @@ def run_inference_chunked(model, img0, img1, device, target_h=None, target_w=Non
 
 
 def main():
-    device = torch.device('cuda')
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ckpt = 'checkpoints/neuflowv3/step_020000.pth'
     out_dir = 'results/neuflowv3_eval'
     os.makedirs(out_dir, exist_ok=True)

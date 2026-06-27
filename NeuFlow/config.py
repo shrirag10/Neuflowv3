@@ -12,3 +12,7 @@ feature_dim_s1_legacy = 128
 # 3 feature scales (context_s8 64d, feat_s8 128d, feat_s16 128d).
 # MLP hidden widened proportionally: [256, 128, 64]
 implicit_mlp_hidden_list = [256, 128, 64]
+
+# Local-window feature querying (3x3 at feature-map resolution)
+# At s8 stride, 3x3 = ±1 feature pixel = ±8 full-res pixels of context per query point.
+implicit_window_size = 3

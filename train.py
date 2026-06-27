@@ -12,7 +12,12 @@ from NeuFlow.neuflow import NeuFlow
 from utils.loss import flow_loss_func, sparse_flow_loss_func
 from NeuFlow.adaptive_query import adaptive_flow_query
 from data_utils.evaluate import validate_things, validate_sintel, validate_kitti, validate_viper
-from utils.load_model import my_load_weights, my_freeze_model
+from utils.load_model import (
+    freeze_for_window_phase1,
+    load_with_new_keys,
+    my_freeze_model,
+    my_load_weights,
+)
 from utils.dist_utils import get_dist_info, init_dist, setup_for_distributed
 
 
@@ -39,6 +44,8 @@ def get_args_parser():
     # resume pretrained model or resume training
     parser.add_argument('--resume', default=None, type=str)
     parser.add_argument('--strict_resume', action='store_true')
+    parser.add_argument('--no_zero_init_decoder_head', action='store_true',
+                        help='Skip zero-init of flow_head output layer. Use when warm-starting from a v3 checkpoint.')
 
     # distributed training
     parser.add_argument('--local-rank', default=0, type=int)
@@ -55,6 +62,8 @@ def get_args_parser():
                         help='Fraction of queries at flow-gradient edges (0=uniform, 1=all adaptive)')
     parser.add_argument('--unfreeze_all', action='store_true',
                         help='Unfreeze all parameters (phase 2 end-to-end fine-tuning)')
+    parser.add_argument('--window_finetune', action='store_true',
+                        help='Phase 1: freeze everything except win_proj_* layers in implicit decoder.')
 
     return parser
 
@@ -132,20 +141,30 @@ def main(args):
 
         state_dict = my_load_weights(args.resume)
 
-        model_without_ddp.load_state_dict(state_dict, strict=args.strict_resume)
+        if args.strict_resume:
+            model_without_ddp.load_state_dict(state_dict, strict=True)
+        else:
+            load_with_new_keys(
+                model_without_ddp,
+                state_dict,
+                missing_ok_substrings=['implicit_decoder_module', 'win_proj_'],
+                unexpected_ok_substrings=['conv_s8', 'upsample_s8'],
+            )
 
         # --- InfiniDepth-aligned init ---
-        # Always zero-init the decoder output layer regardless of freeze mode.
+        # Zero-init the decoder output layer when bootstrapping from v2/base.
         # This ensures delta_flow ≈ 0 at step 0, so the backbone sees near-zero
         # gradients from the decoder and isn't corrupted (safe end-to-end start).
-        if args.implicit and hasattr(model_without_ddp, 'implicit_decoder_module'):
+        if (args.implicit and hasattr(model_without_ddp, 'implicit_decoder_module')
+                and not args.no_zero_init_decoder_head):
             out_layer = model_without_ddp.implicit_decoder_module.flow_head.layers[-1]
             torch.nn.init.zeros_(out_layer.weight)
             torch.nn.init.zeros_(out_layer.bias)
 
-        # Freeze everything except decoder (legacy / ablation only).
-        # InfiniDepth trains end-to-end; use --unfreeze_all to match that.
-        if args.implicit and not args.unfreeze_all:
+        # Phase 1 window fine-tune is narrower than the existing decoder-only path.
+        if args.window_finetune:
+            freeze_for_window_phase1(model)
+        elif args.implicit and not args.unfreeze_all:
             my_freeze_model(model)
 
         trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)

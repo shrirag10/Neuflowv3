@@ -77,6 +77,9 @@ def mem_mb():
 
 
 def main():
+    if not torch.cuda.is_available():
+        raise RuntimeError('benchmark_edge.py requires CUDA for timing and memory measurements.')
+
     device = torch.device('cuda')
     os.makedirs(OUT_DIR, exist_ok=True)
 

@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 from NeuFlow.neuflow import NeuFlow
 from data_utils import frame_utils
-from utils.load_model import my_load_weights
+from utils.load_model import my_load_weights, load_with_new_keys
 
 
 def read_vkitti2_flow(path):
@@ -44,10 +44,15 @@ def build_vkitti2_val_pairs(root, val_scenes=None):
 @torch.no_grad()
 def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=True, crop=None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    amp_enabled = device.type == 'cuda'
 
     model = NeuFlow(use_implicit=implicit).to(device)
     state_dict = my_load_weights(checkpoint)
-    model.load_state_dict(state_dict, strict=not implicit)
+    load_with_new_keys(
+        model, state_dict,
+        missing_ok_substrings=['implicit_decoder_module', 'win_proj_'],
+        unexpected_ok_substrings=['conv_s8', 'upsample_s8'],
+    )
     model.eval()
 
     pairs = build_vkitti2_val_pairs(dataset_root, val_scenes)
@@ -82,9 +87,9 @@ def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=T
         img1, img2 = padder.pad(img1.to(device), img2.to(device))
 
         H, W = img1.shape[-2], img1.shape[-1]
-        model.init_bhwd(1, H, W, device)
+        model.init_bhwd(1, H, W, device, amp=amp_enabled)
 
-        with torch.amp.autocast('cuda', enabled=True):
+        with torch.amp.autocast(device_type=device.type, enabled=amp_enabled):
             results = model(img1, img2)
 
         flow_pr = padder.unpad(results[-1][0]).float().cpu()

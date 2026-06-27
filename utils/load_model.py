@@ -46,3 +46,37 @@ def my_freeze_model(model):
             param.requires_grad = True
         else:
             param.requires_grad = False
+
+
+def load_with_new_keys(model, state_dict,
+                       missing_ok_substrings=(),
+                       unexpected_ok_substrings=()):
+    """Load a checkpoint while allowing explicitly whitelisted key drift."""
+    model_keys = set(model.state_dict().keys())
+    ckpt_keys = set(state_dict.keys())
+
+    missing = sorted(model_keys - ckpt_keys)
+    unexpected = sorted(ckpt_keys - model_keys)
+
+    bad_missing = [
+        k for k in missing
+        if not any(s in k for s in missing_ok_substrings)
+    ]
+    bad_unexpected = [
+        k for k in unexpected
+        if not any(s in k for s in unexpected_ok_substrings)
+    ]
+
+    if bad_missing:
+        raise RuntimeError(f'Missing keys not covered by policy: {bad_missing}')
+    if bad_unexpected:
+        raise RuntimeError(f'Unexpected checkpoint keys not covered by policy: {bad_unexpected}')
+
+    model.load_state_dict(state_dict, strict=False)
+    print(f'Loaded with missing keys initialized fresh: {missing}')
+    print(f'Ignored checkpoint-only keys: {unexpected}')
+
+
+def freeze_for_window_phase1(model):
+    for name, param in model.named_parameters():
+        param.requires_grad = 'win_proj_' in name

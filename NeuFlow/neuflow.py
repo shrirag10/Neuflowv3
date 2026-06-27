@@ -55,6 +55,7 @@ class NeuFlow(torch.nn.Module,
                 feat_dim_ctx=config.context_dim_s8,
                 hidden_dim=config.feature_dim_s16,
                 hidden_list=config.implicit_mlp_hidden_list,
+                window_size=config.implicit_window_size,
             )
         else:
             # ---- Legacy convex-upsampler path ----
@@ -64,6 +65,11 @@ class NeuFlow(torch.nn.Module,
         for p in self.parameters():
             if p.dim() > 1:
                 torch.nn.init.xavier_uniform_(p)
+
+        # Must follow the Xavier loop: resets win_proj_* to center-only sampling
+        # so the decoder is identical to point-sampling before any training.
+        if self.use_implicit:
+            self.implicit_decoder_module.reset_window_projections_to_center()
 
     def init_bhwd(self, batch_size, height, width, device, amp=True):
 

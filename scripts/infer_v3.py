@@ -18,11 +18,11 @@ checkpoint_path = 'checkpoints/neuflowv3/step_020000.pth'
 vis_path = 'results/infer_v3/'
 
 
-def get_cuda_image(image_path):
+def get_image(image_path, device):
     image = cv2.imread(image_path)
     image = cv2.resize(image, (image_width, image_height))
     image = torch.from_numpy(image).permute(2, 0, 1).float()
-    return image[None].cuda()
+    return image[None].to(device)
 
 
 def fuse_conv_and_bn(conv, bn):
@@ -43,7 +43,8 @@ def fuse_conv_and_bn(conv, bn):
     return fusedconv
 
 
-device = torch.device('cuda')
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+amp_enabled = device.type == 'cuda'
 
 model = NeuFlow(use_implicit=True).to(device)
 state_dict = my_load_weights(checkpoint_path)
@@ -58,7 +59,7 @@ for m in model.modules():
         m.forward = m.forward_fuse
 
 model.eval()
-model.init_bhwd(1, image_height, image_width, device)
+model.init_bhwd(1, image_height, image_width, device, amp=amp_enabled)
 
 os.makedirs(vis_path, exist_ok=True)
 
@@ -71,10 +72,10 @@ if len(image_path_list) < 2:
 print(f'Running NeuFlow v3 on {len(image_path_list)-1} pairs → {vis_path}')
 
 for img0_path, img1_path in zip(image_path_list[:-1], image_path_list[1:]):
-    image_0 = get_cuda_image(img0_path)
-    image_1 = get_cuda_image(img1_path)
+    image_0 = get_image(img0_path, device)
+    image_1 = get_image(img1_path, device)
 
-    with torch.no_grad(), torch.amp.autocast('cuda'):
+    with torch.no_grad(), torch.amp.autocast(device_type=device.type, enabled=amp_enabled):
         flow = model(image_0, image_1)[-1][0]
 
     flow_np = flow.permute(1, 2, 0).float().cpu().numpy()
