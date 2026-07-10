@@ -17,7 +17,7 @@ FONT   = 'Calibri'
 TEMPLATE = 'docs/NeuFlow_v3_update.pptx'   # borrow slide size + blank layout
 OUT      = 'docs/NeuFlow_v3_status.pptx'
 
-PE_RESULT = 'training in progress'  # replaced when the PE eval lands
+PE_RESULT = 'measured: no effect (2.29 EPE, 69.7% 1px = no-PE run); sub-cell position is NOT the 1px bottleneck'
 
 
 def add_text(s, x, y, w, h, text, size, bold=False, color=INK):
@@ -228,7 +228,8 @@ def main():
     add_text(s, 0.75, 1.9, 11.5, 3.9,
              'Beat v2 mean EPE                        DONE — 2.275 vs 2.324 (chairs-only training)\n\n'
              'Less compute (sparse use case)          DONE — ~35 ms total, O(N) queries, 13% fewer params, 2.2 GB VRAM\n\n'
-             f'Sub-pixel precision parity (1px acc)    IN PROGRESS — Fourier PE ablation ({PE_RESULT})\n\n'
+             'Sub-pixel precision parity (1px acc)    OPEN — PE ablation was null: gap is not positional signal.\n'
+             '                                        Next hypothesis: 1/8 coarse-flow resolution bound; test via vkitti2+PE or finer scale\n\n'
              'Combine chairs + vkitti2 strengths      NEXT — mixed-dataset training (forgetting measured and understood)\n\n'
              'Edge-device validation                  NEXT — Jetson Orin benchmark of the two-pass API', 14, False, INK)
     add_text(s, 1.05, 6.3, 11.3, 0.6,

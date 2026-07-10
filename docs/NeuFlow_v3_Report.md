@@ -52,7 +52,7 @@ All numbers from `scripts/eval_vkitti2.py` after the 2026-07-08 metrics fix.
 | v3 convex head | VKITTI2 (6 variants, 12.7k pairs) | 2.388 | 74.7% | 88.9% |
 | v3 convex head | **FlyingChairs only (22.2k pairs)** | **2.275** | 69.7% | 87.8% |
 | v3 convex, chairs → vkitti2 finetune | both, sequential | 2.499 | 74.6% | 88.6% |
-| v3 convex + Fourier PE | FlyingChairs | *training in progress* | | |
+| v3 convex + Fourier PE | FlyingChairs | 2.288 | 69.7% | 87.8% |
 
 Visual comparisons: `results/visuals/compare_*.png` (GT vs v2 vs v3 + error maps),
 `results/visuals/sparse_queries.png` (300 corner queries in one 1.6 ms call),
@@ -70,8 +70,12 @@ Key findings:
    the output via convex weights fixed this immediately.
 4. **Sequential finetuning forgets.** chairs → vkitti2 at lr 1e-4 lost the chairs
    robustness (2.28 → 2.50). Mixed-dataset training is the identified fix.
-5. Remaining gap to v2: sub-pixel precision (1px accuracy 69.7–74.7% vs 77.6%) — the
-   motivation for the Fourier PE ablation now running.
+5. Remaining gap to v2: sub-pixel precision (1px accuracy 69.7–74.7% vs 77.6%).
+6. **PE ablation: null result (2026-07-10).** Adding Fourier sub-cell encoding to the
+   chairs recipe changed nothing (2.288 vs 2.275 EPE, 1px acc identical at 69.7%).
+   Clean falsification: the 1px gap is NOT missing positional signal. Remaining
+   hypotheses: (a) the 1/8 coarse flow bounds recoverable detail; (b) chairs' large
+   motions never supervise sub-pixel discrimination — test PE with vkitti2/mixed data.
 
 ## 4. Compute: v2 vs v3 (RTX 4060 Laptop 8GB, fp16, 384×1248)
 
@@ -94,7 +98,7 @@ slower than v2 and is not the intended use.
 **Objective scorecard** (better EPE at less compute, edge-capable):
 - Mean EPE better than v2: ✅ (2.275 vs 2.324, chairs-only)
 - Less compute for the sparse use case: ✅ (~35 ms, O(N), fewer params)
-- Sub-pixel precision parity: ❌ not yet (PE ablation in progress)
+- Sub-pixel precision parity: ❌ open — PE ablation ruled OUT positional signal as the cause
 - Edge-device validation (Jetson): pending — next after PE
 
 ## 5. The query interface — exact numbers and how to use it
@@ -176,10 +180,11 @@ Dense means 479k MLP evaluations (~293 ms); v2's convex upsample is one fused co
 requirement in registration, tracking, and mapping.
 
 **Q: What limits sub-pixel (1px) accuracy?**
-Until now the head literally could not see where a query sits inside its 8×8 coarse
-cell (features vary smoothly; global coords are too coarse a signal). The Fourier PE
-ablation injects exactly that signal. Beyond it: the 1/8 coarse flow itself bounds
-recoverable detail.
+Measured answer: not missing positional signal — injecting Fourier sub-cell encoding
+changed nothing (2.288 vs 2.275 EPE, 1px acc identical). The remaining suspects are
+the 1/8 coarse flow itself bounding recoverable detail, and training data whose
+motions are too large to supervise sub-pixel discrimination (chairs). Testing PE with
+fine-motion data (vkitti2/mixed) separates the two.
 
 **Q: Why batch size 4?**
 8 GB VRAM. The recipe is otherwise standard RAFT; on cluster GPUs batch 8–16 with the
@@ -214,7 +219,7 @@ curriculum, PE (current). Remote: github.com/shrirag10/Neuflowv3.
 
 ## 8. Next steps
 
-1. **Fourier PE ablation** — running; targets the 1px-accuracy gap.
+1. ~~Fourier PE ablation~~ — done, null result; 1px gap is not positional.
 2. **Mixed chairs + vkitti2 training** — fixes finetune forgetting; expected to combine
    2.28 EPE with ≥74.7% 1px accuracy.
 3. **Jetson benchmark** — port `benchmark_edge.py`; the O(N) claim is strongest where
