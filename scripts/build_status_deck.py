@@ -159,7 +159,25 @@ def main():
              f'({PE_RESULT}).', 12, False, INK)
     footer(s, 5)
 
-    # ---- 6 · Compute benchmark ----
+
+    # ---- 6 · Visual results ----
+    s = p.slides.add_slide(layout)
+    add_text(s, 0.75, 0.42, 11.0, 0.3, 'VISUAL RESULTS  ·  VKITTI2 SCENE18', 10.5, True, ACCENT)
+    add_text(s, 0.73, 0.72, 11.8, 0.8, 'Seeing the output: dense fields and sparse queries', 24, True, INK)
+    s.shapes.add_picture('results/visuals/sparse_queries.png', Inches(0.75), Inches(1.65), width=Inches(8.2))
+    add_text(s, 9.2, 1.75, 3.5, 3.2,
+             '300 corner-detected queries,\ndecoded in ONE 1.6 ms call\n(0.05% of a dense field).\n\n'
+             'Arrow color = flow magnitude.\nLeft roadside streams left,\nright side streams right —\n'
+             'forward ego-motion, correctly\nrecovered per point.', 12, False, INK)
+    add_text(s, 0.75, 4.6, 11.8, 0.4,
+             'Full-field comparisons (input / GT / v2 / v3 / error maps): results/visuals/compare_0.png, compare_1.png',
+             11, False, MUTED)
+    add_text(s, 1.05, 6.3, 11.3, 0.6,
+             'Takeaway   v3 flow fields are structurally clean; both models fail in the same hard regions (dense foliage).',
+             11.5, True, ACCENT)
+    footer(s, 6)
+
+    # ---- 7 · Compute benchmark ----
     s = p.slides.add_slide(layout)
     add_text(s, 0.75, 0.42, 11.0, 0.3, 'RESULT 3 OF 3  ·  RTX 4060 LAPTOP 8GB, FP16, 384x1248', 10.5, True, ACCENT)
     add_text(s, 0.73, 0.72, 11.8, 0.8, 'Compute: v2 vs v3', 24, True, INK)
@@ -175,7 +193,35 @@ def main():
              11.5, True, ACCENT)
     footer(s, 6)
 
-    # ---- 7 · Objective scorecard ----
+
+    # ---- 8 · How to query ----
+    s = p.slides.add_slide(layout)
+    add_text(s, 0.75, 0.42, 11.0, 0.3, 'INTERFACE', 10.5, True, ACCENT)
+    add_text(s, 0.73, 0.72, 11.8, 0.8, 'How querying works — sizes, API, interactivity', 24, True, INK)
+    add_text(s, 0.75, 1.7, 6.3, 2.4,
+             'Query = one continuous (x, y). N is free: 1 click to 479,232\n'
+             '(= dense at 384x1248). Sub-pixel coords are first-class.\n\n'
+             'state = model.infer_coarse_state(img0, img1)   # 33 ms, once\n'
+             'flow  = model.decode_queries(state, query_coords=q)\n'
+             '        # q: [B, N, 2] pixels -> [B, N, 2] flow, 1.6 ms\n'
+             '        # or target_h/w (any resolution), or adaptive_n', 12, False, INK)
+    add_text(s, 0.75, 4.15, 6.3, 2.0,
+             'Training setup: batch 4 (8 GB VRAM) · 4,096 queries/image\n'
+             '(3.1% of crop, half at motion boundaries) · datasets:\n'
+             'VKITTI2 6-variant (12,726 pairs) + FlyingChairs (22,232)\n'
+             '· AdamW OneCycle 2e-4 · backbone frozen', 12, False, INK)
+    s.shapes.add_picture('results/visuals/query_gui_selftest.png', Inches(7.3), Inches(1.7), width=Inches(5.3))
+    add_text(s, 7.3, 3.6, 5.3, 1.6,
+             'Interactive query selector (PyQt5, working):\n'
+             'click = flow at that pixel in ~1.6 ms; G = 32x32 grid.\n'
+             'Viable precisely because of the two-pass API —\n'
+             'v2 would recompute the full frame per click.', 11, False, INK)
+    add_text(s, 1.05, 6.3, 11.3, 0.6,
+             'Takeaway   scripts/query_gui.py demonstrates flow-on-demand; the same API serves robots and humans.',
+             11.5, True, ACCENT)
+    footer(s, 8)
+
+    # ---- 9 · Objective scorecard ----
     s = p.slides.add_slide(layout)
     add_text(s, 0.75, 0.42, 11.0, 0.3, 'OBJECTIVES', 10.5, True, ACCENT)
     add_text(s, 0.73, 0.72, 11.8, 0.8, 'Better EPE at less compute, edge-capable — where we stand', 24, True, INK)
@@ -190,7 +236,25 @@ def main():
              11.5, True, ACCENT)
     footer(s, 7)
 
-    # ---- 8 · Next steps ----
+
+    # ---- 10 · FAQ ----
+    s = p.slides.add_slide(layout)
+    add_text(s, 0.75, 0.42, 11.0, 0.3, 'ANTICIPATED QUESTIONS', 10.5, True, ACCENT)
+    add_text(s, 0.73, 0.72, 11.8, 0.8, 'First-principles FAQ', 24, True, INK)
+    add_text(s, 0.75, 1.7, 11.8, 4.4,
+             'Why is flow queryable at continuous coords?  Bilinear feature interpolation + an MLP = a function defined at every real (x, y).\n\n'
+             'Why freeze the backbone?  Joint training needs ~800K steps (InfiniDepth); at 30K the decoder chases moving features and diverges.\n\n'
+             'Is sparse an approximation?  No — the identical function at fewer points; matches dense to 0.00 px at the same coordinates.\n\n'
+             'Why does chairs training beat driving-data training on driving data?  Diverse large motions fix the error tail; 5 scenes teach memorization.\n\n'
+             'If sparse is fast, why is dense slow?  Dense = 479k MLP calls (~293 ms); v2 upsampling is one fused conv. Dense is not the use case.\n\n'
+             'What limits 1px accuracy?  The head could not see the sub-cell position — exactly what the Fourier PE ablation injects.',
+             12.5, False, INK)
+    add_text(s, 1.05, 6.3, 11.3, 0.6,
+             'Takeaway   Full FAQ + derivations: docs/NeuFlow_v3_Report.md sections 5-6.',
+             11.5, True, ACCENT)
+    footer(s, 10)
+
+    # ---- 11 · Next steps ----
     s = p.slides.add_slide(layout)
     add_text(s, 0.75, 0.42, 11.0, 0.3, 'NEXT', 10.5, True, ACCENT)
     add_text(s, 0.73, 0.72, 11.8, 0.8, 'Next steps', 24, True, INK)
@@ -204,7 +268,7 @@ def main():
     add_text(s, 1.05, 6.3, 11.3, 0.6,
              'Takeaway   The architecture is validated; remaining work is training composition and edge deployment.',
              11.5, True, ACCENT)
-    footer(s, 8)
+    footer(s, 11)
 
     p.save(OUT)
     print(f'saved {OUT} with {len(p.slides._sldIdLst)} slides')
