@@ -53,3 +53,17 @@ The baseline run's success criterion is therefore: **beat 2.48.**
 
 Historical caution: numbers before 2026-07-08 used per-frame statistics mislabeled as pixel accuracy;
 do not compare against them.
+
+## v2-dev result (2026-07-09): convex head + 6x variant data — first net-positive training
+
+| Model | Mean EPE | 1px acc | 3px acc |
+|---|---|---|---|
+| v2-dev step_0 (bilinear-prior init) | 2.476 | 74.7% | 88.2% |
+| **v2-dev step_15000 (final)** | **2.388** | **74.7%** | **88.9%** |
+| v2 reference | 2.324 | 77.6% | 89.8% |
+
+- First checkpoint ever to train below its initialization (2.39 < 2.48).
+- Best checkpoint is the FINAL one (OneCycle tail) — no overfitting collapse with 6x data;
+  the curve is still descending at 15K. Longer training is the obvious next lever.
+- Remaining gap to v2: 0.06 px EPE and 2.9 points of 1px accuracy.
+- Run: `train_v2dev.sh` (head=convex, stage=vkitti2_all, 15K steps).
