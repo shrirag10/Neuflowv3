@@ -1,0 +1,127 @@
+# NeuFlow v3 — Project Report
+
+**Shriman Raghav Srinivasan · MS Robotics, Northeastern University**
+Updated 2026-07-10 · replaces `docs/archive/report.pdf` and `docs/archive/proposal.pdf`
+
+---
+
+## 1. Background: what NeuFlow v2 is
+
+NeuFlow v2 (Zhang, Gupta, Jiang, Singh — arXiv:2408.10161) is a real-time optical flow
+network for edge devices. Pipeline: a shallow CNN backbone extracts features at 1/8 and
+1/16 scale → cross-attention + global matching at 1/16 gives an initial flow → a
+lightweight recurrent refinement (1 iteration at 1/16, 8 at 1/8) produces flow at 1/8
+resolution → a **convex upsampler** (learned 3×3 blending weights on a fixed 8× grid)
+produces the full-resolution flow map. It runs 10–70× faster than SOTA methods at
+comparable accuracy (>20 FPS at 512×384 on a Jetson Orin Nano).
+
+Its one structural limit: the output is a **dense, fixed-resolution map**. Every pixel is
+always computed, and only at the input resolution.
+
+## 2. What NeuFlow v3 changes
+
+v3 keeps the entire v2 pipeline through the 1/8-resolution coarse flow (backbone frozen,
+weights untouched) and replaces only the upsampler with an **implicit, queryable decoder**
+(InfiniDepth/AnyFlow lineage):
+
+- Any continuous (x, y) coordinate can be queried directly: cost is O(N) in the number
+  of queries, not O(H×W).
+- Two-pass API: `infer_coarse_state()` once per image pair (~33 ms), then
+  `decode_queries()` at ~1.6 ms per batch of ≤2k points — repeatable at no extra
+  backbone cost.
+- Decoder architecture: 3×3 local-window sampling of 4 feature sources (context,
+  1/8 features, 1/16 features, flow-warped frame-1 features), gated hierarchical fusion
+  (InfiniDepth Eq. 3), then a head.
+- **Convex-weight head** (added 2026-07-09, AnyFlow-style): the MLP outputs softmax
+  weights over the 3×3 coarse-flow neighborhood + a bilinear candidate. Output is a
+  bounded blend — it cannot hallucinate large flow. Initialization is biased to the
+  bilinear candidate, so an untrained decoder exactly reproduces bilinear upsampling.
+- **Fourier positional encoding** (added 2026-07-10, ablation in progress): encodes the
+  query's sub-cell offset so the head can produce sub-pixel-sharp output.
+- v3 is *smaller* than v2: 7.83M vs 9.03M parameters.
+
+## 3. Results (per-pixel, VKITTI2 Scene18+20, 1174 pairs, 460M pixels)
+
+All numbers from `scripts/eval_vkitti2.py` after the 2026-07-08 metrics fix.
+(Numbers reported before that date used per-frame statistics and are invalid.)
+
+| Configuration | Trained on | Mean EPE | 1px acc | 3px acc |
+|---|---|---|---|---|
+| NeuFlow v2 (reference) | FlyingThings | 2.324 | **77.6%** | **89.8%** |
+| v3, **no training at all** (bilinear init) | — | 2.476 | 74.7% | 88.2% |
+| v3 convex head | VKITTI2 (6 variants, 12.7k pairs) | 2.388 | 74.7% | 88.9% |
+| v3 convex head | **FlyingChairs only (22.2k pairs)** | **2.275** | 69.7% | 87.8% |
+| v3 convex, chairs → vkitti2 finetune | both, sequential | 2.499 | 74.6% | 88.6% |
+| v3 convex + Fourier PE | FlyingChairs | *training in progress* | | |
+
+Key findings:
+
+1. **Zero-training operating point.** With no decoder training whatsoever, v3 delivers
+   2.48 px EPE (+0.15 vs v2) while adding queryability. The sparse-query mechanism is
+   *exact*: decoding N points matches the dense output at those points to 0.00 px.
+2. **Chairs-only beats v2 on mean EPE** (2.275 vs 2.324) with no driving data in
+   training — evidence the queryable decoder generalizes rather than memorizes.
+3. **Failure mode found and fixed.** The original head regressed flow deltas scaled by
+   image width; it *never trained below its own initialization* (best 2.77). Bounding
+   the output via convex weights fixed this immediately.
+4. **Sequential finetuning forgets.** chairs → vkitti2 at lr 1e-4 lost the chairs
+   robustness (2.28 → 2.50). Mixed-dataset training is the identified fix.
+5. Remaining gap to v2: sub-pixel precision (1px accuracy 69.7–74.7% vs 77.6%) — the
+   motivation for the Fourier PE ablation now running.
+
+## 4. Compute: v2 vs v3 (RTX 4060 Laptop 8GB, fp16, 384×1248)
+
+| Metric | NeuFlow v2 | NeuFlow v3 |
+|---|---|---|
+| Parameters | 9.03 M | **7.83 M** |
+| Full-frame dense flow | **37.0 ms (27 FPS)** | 326 ms (3 FPS) |
+| Coarse pass (once per pair) | — | 32.9 ms |
+| Decode 800 queries | not possible | **1.6 ms** |
+| Decode 4,096 queries | not possible | 2.2 ms |
+| Sparse total (≤2k pts) | — | **~35 ms (~29 FPS)** |
+| Extra queries on same pair | full recompute (37 ms) | 1.6–2.2 ms |
+| Inference VRAM (sparse) | — | ~2.2 GB |
+
+The operating point that matters for edge robotics: **v3 answers sparse queries at the
+same latency v2 needs for a full frame** — and any *additional* queries on an
+already-processed pair are ~200× cheaper than v2 recomputing. Dense v3 output is 8.8×
+slower than v2 and is not the intended use.
+
+**Objective scorecard** (better EPE at less compute, edge-capable):
+- Mean EPE better than v2: ✅ (2.275 vs 2.324, chairs-only)
+- Less compute for the sparse use case: ✅ (~35 ms, O(N), fewer params)
+- Sub-pixel precision parity: ❌ not yet (PE ablation in progress)
+- Edge-device validation (Jetson): pending — next after PE
+
+## 5. Repository organization
+
+```
+NeuFlow_v3/
+├── NeuFlow/                  model (implicit_decoder.py = the v3 contribution)
+├── data_utils/ utils/        loaders (chairs/things/sintel/kitti/vkitti2[_all]/viper), loss, DDP
+├── scripts/                  eval_vkitti2.py · benchmark_edge.py · demo_registration.py
+│                             stream_chairs_png.py (zip-less dataset acquisition)
+├── train_*.sh                one script per documented experiment
+├── checkpoints/<run>/        step_XXXXXX.pth + train_log.csv per run
+├── datasets/                 vkitti2 (37 GB, 10 variants) · FlyingChairs_release (46 GB, PNG)
+├── docs/
+│   ├── NeuFlow_v3_Report.md      ← this file (single source of truth with base_parameters.md)
+│   ├── base_parameters.md        parameter derivations + full result log
+│   ├── NeuFlow_v3_update.pptx    progress deck (2026-06-27, +baseline slide 07-09)
+│   ├── NeuFlow_v3_status.pptx    current status deck (2026-07-10)
+│   └── archive/                  superseded reports (report.pdf, proposal.pdf, meeting prep)
+└── results/                  charts + demo outputs
+```
+
+Branches: `v1-dev` = corrected metrics + paper-aligned recipe · `v2-dev` = convex head,
+curriculum, PE (current). Remote: github.com/shrirag10/Neuflowv3.
+
+## 6. Next steps
+
+1. **Fourier PE ablation** — running; targets the 1px-accuracy gap.
+2. **Mixed chairs + vkitti2 training** — fixes finetune forgetting; expected to combine
+   2.28 EPE with ≥74.7% 1px accuracy.
+3. **Jetson benchmark** — port `benchmark_edge.py`; the O(N) claim is strongest where
+   dense flow genuinely cannot run.
+4. Thesis framing unchanged: queryable flow for registration/mapping — one backbone
+   pass, on-demand correspondences at chosen points, arbitrary resolution.
