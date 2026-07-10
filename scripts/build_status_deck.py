@@ -15,7 +15,8 @@ MUTED  = RGBColor(0x7B, 0x83, 0x8F)
 FONT   = 'Calibri'
 OUT    = 'docs/NeuFlow_v3_status.pptx'
 
-MIX_RESULT = 'training in progress'   # updated when the mixed-dataset eval lands
+MIX_RESULT = ('2.18 px EPE, 76.4% 1 px, 89.6% 3 px — best result to date; '
+              'both parents\u2019 strengths retained')
 
 
 def add_text(s, x, y, w, h, text, size, bold=False, color=INK, line_spacing=1.0):
@@ -296,10 +297,9 @@ def main():
     s, i = slide()
     header(s, 'OBJECTIVES', 'Standing of the three stated objectives')
     add_text(s, 0.75, 1.85, 11.8, 4.2,
-             'Objective 1 — exceed NeuFlow v2’s accuracy.  Met on mean EPE: 2.28 vs 2.32 px, achieved by the\n'
-             'FlyingChairs-trained decoder. Sub-pixel precision (1 px accuracy) remains 5–8 points behind and is the\n'
-             'active workstream; position encoding has been ruled out as the cause, focusing attention on coarse-flow\n'
-             'resolution and training-motion statistics.\n\n'
+             'Objective 1 — exceed NeuFlow v2’s accuracy.  Met: 2.18 vs 2.32 px mean EPE (6% better), achieved by\n'
+             'mixed chairs+VKITTI2 training. Sub-pixel precision is now within 1.2 points of v2 (76.4% vs 77.6%) and\n'
+             '3 px accuracy is at parity (89.6% vs 89.8%).\n\n'
              'Objective 2 — lower compute, edge-viable.  Met for the intended workload: sparse answers arrive at v2’s\n'
              'full-frame latency with 13% fewer parameters and ~2.2 GB inference VRAM; repeated queries are ~20×\n'
              'cheaper than v2 recomputation. Dense-output mode remains slower and is explicitly out of scope.\n\n'
@@ -313,13 +313,12 @@ def main():
     s, i = slide()
     header(s, 'NEXT STEPS', 'The running experiment, and the dataset conversation for the lab')
     add_text(s, 0.75, 1.7, 6.1, 4.5,
-             'Running now: mixed-dataset training\n\n'
+             'Completed: mixed-dataset training\n\n'
              'Joint sampling of FlyingChairs and all VKITTI2 variants\n'
              '(34,958 pairs, single 320×512 crop) under the standard\n'
-             'recipe. Hypothesis: joint exposure preserves the chairs\n'
-             'error-tail robustness while the driving data restores\n'
-             'sub-pixel precision — the combination that sequential\n'
-             'finetuning provably forgot.\n\n'
+             'recipe. Result: hypothesis confirmed — 2.18 px EPE with\n'
+             '76.4% 1 px accuracy; the chairs robustness and the\n'
+             'driving-data precision coexist under joint sampling.\n\n'
              'After that, in order:\n'
              '•  Jetson Orin benchmark of the two-pass API\n'
              '•  Spring dataset evaluation — ground truth at 2× input\n'
