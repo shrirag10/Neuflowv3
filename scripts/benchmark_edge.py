@@ -24,7 +24,7 @@ from utils.load_model import my_load_weights
 from NeuFlow.neuflow import NeuFlow
 
 # ─── Config ─────────────────────────────────────────────────────────────────
-CHECKPOINT   = 'checkpoints/neuflowv3/step_020000.pth'
+CHECKPOINT   = 'checkpoints/neuflowv3_window_phase2/step_008000.pth'
 IMAGE_H, IMAGE_W = 384, 1248        # VKITTI2 native resolution
 WARMUP_RUNS  = 5
 BENCH_RUNS   = 20
