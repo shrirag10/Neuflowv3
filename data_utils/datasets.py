@@ -481,6 +481,21 @@ def build_train_dataset(stage):
         aug_params = {'crop_size': crop_size, 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}
         train_dataset = VKITTI2(aug_params=aug_params)
 
+    elif stage == 'mix_chairs_vkitti2':
+        # RAFT-style mixed stage: one crop size so batches stack.
+        # Natural ratio ~64% chairs / 36% vkitti2_all (22,232 + 12,726 pairs).
+        # Rationale: sequential finetune forgot chairs robustness (2.28 -> 2.50);
+        # joint sampling keeps both distributions in every epoch.
+        crop_size = (320, 512)
+        chairs_aug = {'crop_size': crop_size, 'min_scale': -0.1, 'max_scale': 0.6, 'do_flip': True}
+        vk_aug     = {'crop_size': crop_size, 'min_scale': -0.1, 'max_scale': 0.5, 'do_flip': True}
+        chairs = FlyingChairs(chairs_aug, split='training')
+        vk = VKITTI2(
+            aug_params=vk_aug,
+            variants=['clone', 'fog', 'rain', 'morning', 'sunset', 'overcast'],
+        )
+        train_dataset = chairs + vk
+
     elif stage == 'vkitti2_all':
         # All same-trajectory variants: identical flow GT, different appearance
         # (weather/time-of-day) — photometric augmentation for free, ~6x pairs.
