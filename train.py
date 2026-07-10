@@ -41,6 +41,18 @@ def get_args_parser():
 
     parser.add_argument('--max_flow', default=400, type=int)
 
+    # base training parameters (paper-aligned defaults: RAFT/NeuFlow-v2 recipe)
+    parser.add_argument('--gamma', default=0.8, type=float,
+                        help='Exponential loss weight over refinement iterations (RAFT uses 0.8)')
+    parser.add_argument('--train_iters_s16', default=1, type=int,
+                        help='s16 refinement iters during training (match eval default: 1)')
+    parser.add_argument('--train_iters_s8', default=8, type=int,
+                        help='s8 refinement iters during training (match eval default: 8)')
+    parser.add_argument('--no_query_jitter', action='store_true',
+                        help='Sample GT at exact integer pixels (no sub-pixel jitter / no GT interpolation)')
+    parser.add_argument('--onecycle', action='store_true',
+                        help='Use OneCycleLR schedule (RAFT/AnyFlow recipe) instead of step decay')
+
     # resume pretrained model or resume training
     parser.add_argument('--resume', default=None, type=str)
     parser.add_argument('--strict_resume', action='store_true')
@@ -192,14 +204,15 @@ def main(args):
                                                pin_memory=True, drop_last=True,
                                                sampler=train_sampler)
 
-    # lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
-    #     optimizer, args.lr,
-    #     args.num_steps + 10,
-    #     pct_start=0.05,
-    #     cycle_momentum=False,
-    #     anneal_strategy='cos',
-    #     last_epoch=last_epoch,
-    # )
+    lr_scheduler = None
+    if args.onecycle:
+        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer, [g['lr'] for g in optimizer.param_groups],
+            total_steps=args.num_steps + 10,
+            pct_start=0.05,
+            cycle_momentum=False,
+            anneal_strategy='cos',
+        )
 
     total_steps = 0
     epoch = 0
@@ -242,7 +255,7 @@ def main(args):
                         flow_gt, valid_mask,
                         num_points=args.num_sparse_points,
                         adaptive_ratio=args.adaptive_query_ratio,
-                        jitter=True,
+                        jitter=not args.no_query_jitter,
                     )  # [B, N, 2]
 
                     # --- Bilinearly sample GT flow at continuous coords ---
@@ -258,14 +271,16 @@ def main(args):
                         padding_mode='border', align_corners=False,
                     ).squeeze(2)  # [B, 2, N]
 
-                    flow_preds = model(img1, img2, iters_s16=4, iters_s8=7,
+                    flow_preds = model(img1, img2,
+                                       iters_s16=args.train_iters_s16,
+                                       iters_s8=args.train_iters_s8,
                                        query_coords=query_coords)
 
                     # Compute multi-scale loss on sparse predictions
                     loss = torch.tensor(0.0, device=device)
                     n_preds = len(flow_preds)
                     for idx in range(n_preds):
-                        i_weight = 0.9 ** (n_preds - idx - 1)
+                        i_weight = args.gamma ** (n_preds - idx - 1)
                         pred = flow_preds[idx]
                         if pred.dim() == 4:
                             # Dense coarse predictions: bilinearly sample at query coords
@@ -291,8 +306,11 @@ def main(args):
                     }
                 else:
                     # --- Dense forward pass (legacy or implicit without sparse) ---
-                    flow_preds = model(img1, img2, iters_s16=4, iters_s8=7)
-                    loss, metrics = flow_loss_func(flow_preds, flow_gt, valid, args.max_flow)
+                    flow_preds = model(img1, img2,
+                                       iters_s16=args.train_iters_s16,
+                                       iters_s8=args.train_iters_s8)
+                    loss, metrics = flow_loss_func(flow_preds, flow_gt, valid, args.max_flow,
+                                                   gamma=args.gamma)
 
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
@@ -304,6 +322,9 @@ def main(args):
             scaler.step(optimizer)
 
             scaler.update()
+
+            if lr_scheduler is not None:
+                lr_scheduler.step()
 
             _dec_lr = optimizer.param_groups[0]['lr']
             _bb_lr  = optimizer.param_groups[-1]['lr'] if len(optimizer.param_groups) > 1 else _dec_lr
@@ -371,7 +392,7 @@ def main(args):
 
                     counter += 1
 
-                    if counter >= 10:
+                    if counter >= 10 and lr_scheduler is None:
 
                         for group in optimizer.param_groups:
                             group['lr'] *= 0.8

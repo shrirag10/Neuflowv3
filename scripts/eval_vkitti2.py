@@ -1,5 +1,6 @@
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import time
 import torch
 import numpy as np
 import argparse
@@ -60,6 +61,11 @@ def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=T
 
     epe_list = []
     mag_list = []
+    px_count = 0
+    epe_sum = 0.0
+    acc1_count = 0
+    acc3_count = 0
+    fwd_times = []
 
     for img1_path, img2_path, flow_path in tqdm(pairs):
         import cv2
@@ -90,7 +96,13 @@ def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=T
         model.init_bhwd(1, H, W, device, amp=amp_enabled)
 
         with torch.amp.autocast(device_type=device.type, enabled=amp_enabled):
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
+            t0 = time.perf_counter()
             results = model(img1, img2)
+            if device.type == 'cuda':
+                torch.cuda.synchronize()
+            fwd_times.append(time.perf_counter() - t0)
 
         flow_pr = padder.unpad(results[-1][0]).float().cpu()
 
@@ -98,17 +110,32 @@ def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=T
         mag = torch.sum(flow_gt ** 2, dim=0).sqrt()
 
         val = valid.bool().view(-1)
-        epe_list.append(epe.view(-1)[val].mean().item())
+        epe_px = epe.view(-1)[val]
+        epe_list.append(epe_px.mean().item())
         mag_list.append(mag.view(-1)[val].mean().item())
+
+        px_count += epe_px.numel()
+        epe_sum += epe_px.sum().item()
+        acc1_count += (epe_px < 1.0).sum().item()
+        acc3_count += (epe_px < 3.0).sum().item()
 
     epe_arr = np.array(epe_list)
     print(f'\n--- vKITTI2 Eval ({val_scenes}) ---')
-    print(f'Mean EPE : {np.mean(epe_arr):.4f} px')
-    print(f'Median EPE: {np.median(epe_arr):.4f} px')
-    print(f'Mean flow mag: {np.mean(mag_list):.4f} px')
-    print(f'1px acc  : {(epe_arr < 1.0).mean() * 100:.2f}%')
-    print(f'3px acc  : {(epe_arr < 3.0).mean() * 100:.2f}%')
-    return np.mean(epe_arr)
+    print(f'Per-pixel ({px_count:,} px):')
+    print(f'  Mean EPE : {epe_sum / px_count:.4f} px')
+    print(f'  1px acc  : {acc1_count / px_count * 100:.2f}%')
+    print(f'  3px acc  : {acc3_count / px_count * 100:.2f}%')
+    print(f'Per-image (mean-EPE over {len(epe_arr)} pairs):')
+    print(f'  Mean EPE : {np.mean(epe_arr):.4f} px')
+    print(f'  Median EPE: {np.median(epe_arr):.4f} px')
+    print(f'  Mean flow mag: {np.mean(mag_list):.4f} px')
+    print(f'  frames w/ mean EPE<1px: {(epe_arr < 1.0).mean() * 100:.2f}%  (old "1px acc")')
+    print(f'  frames w/ mean EPE<3px: {(epe_arr < 3.0).mean() * 100:.2f}%  (old "3px acc")')
+    times_ms = np.array(fwd_times[10:]) * 1000  # skip warmup pairs
+    print(f'Runtime (dense forward, {img1.shape[-2]}x{img1.shape[-1]}, fp16):')
+    print(f'  Mean : {times_ms.mean():.1f} ms  ({1000 / times_ms.mean():.1f} FPS)')
+    print(f'  Median: {np.median(times_ms):.1f} ms')
+    return epe_sum / px_count
 
 
 if __name__ == '__main__':

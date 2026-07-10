@@ -169,7 +169,7 @@ class FlyingChairs(FlowDataset):
                  ):
         super(FlyingChairs, self).__init__(aug_params)
 
-        images = sorted(glob(osp.join(root, '*.ppm')))
+        images = sorted(glob(osp.join(root, '*.ppm'))) or sorted(glob(osp.join(root, '*.png')))
         flows = sorted(glob(osp.join(root, '*.flo')))
         assert (len(images) // 2 == len(flows))
 
