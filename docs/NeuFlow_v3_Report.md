@@ -54,6 +54,10 @@ All numbers from `scripts/eval_vkitti2.py` after the 2026-07-08 metrics fix.
 | v3 convex, chairs → vkitti2 finetune | both, sequential | 2.499 | 74.6% | 88.6% |
 | v3 convex + Fourier PE | FlyingChairs | *training in progress* | | |
 
+Visual comparisons: `results/visuals/compare_*.png` (GT vs v2 vs v3 + error maps),
+`results/visuals/sparse_queries.png` (300 corner queries in one 1.6 ms call),
+`results/visuals/query_gui_selftest.png` (interactive GUI).
+
 Key findings:
 
 1. **Zero-training operating point.** With no decoder training whatsoever, v3 delivers
@@ -93,7 +97,99 @@ slower than v2 and is not the intended use.
 - Sub-pixel precision parity: ❌ not yet (PE ablation in progress)
 - Edge-device validation (Jetson): pending — next after PE
 
-## 5. Repository organization
+## 5. The query interface — exact numbers and how to use it
+
+**Query size.** A "query" is one continuous (x, y) coordinate. N is free: 1 (a single
+click) to H×W (dense). Reference points at 384×1248 input:
+
+| Mode | N | Share of dense | Decode cost |
+|---|---|---|---|
+| Single point (GUI click) | 1 | — | ~1.6 ms |
+| Registration demo | 800 | 0.17% | 1.6 ms |
+| Training supervision | 4,096 per image | 3.1% of a 256×512 crop | — |
+| Edge sweet spot | ≤2,048 | 0.4% | 1.6 ms (flat) |
+| Dense (full frame) | 479,232 | 100% | ~293 ms |
+
+Queries are continuous — (312.7, 188.2) is as valid as (312, 188); the decoder
+interpolates features bilinearly, so sub-pixel positions are first-class.
+
+**How to query (the entire API):**
+
+```python
+model = NeuFlow(use_implicit=True, head_mode='convex')          # + use_pe=True for PE checkpoints
+state = model.infer_coarse_state(img0, img1)                    # once per pair, ~33 ms
+flow  = model.decode_queries(state, query_coords=q)             # q: [B, N, 2] (x, y) pixels -> [B, N, 2]
+flow  = model.decode_queries(state, target_h=H, target_w=W)     # dense grid at ANY resolution
+flow  = model.decode_queries(state, adaptive_n=1000)            # auto-allocate at motion boundaries
+```
+
+**Interactive GUI (viability: confirmed, prototype working).** `scripts/query_gui.py`
+is a PyQt5 tool: load an image pair, the backbone runs once, then every left-click
+queries flow at that pixel (arrow + value overlay, per-click latency in the status
+bar); `G` decodes a 32×32 grid, right-click clears. Self-test renders offscreen
+(`--selftest`). The two-pass API is what makes this possible — v2 would need a full
+37 ms recompute per interaction; v3 answers clicks from cache in ~1.6 ms.
+
+**Training configuration (current):**
+
+| Parameter | Value |
+|---|---|
+| Batch size | 4 (VRAM-bound, RTX 4060 8 GB) |
+| Crop | 256×512 (VKITTI2) / 384×512 (chairs) |
+| Queries per image | 4,096 (50% at motion boundaries, 50% uniform, integer pixels) |
+| Datasets in use | VKITTI2 clone+5 variants (12,726 pairs) · FlyingChairs (22,232 pairs) |
+| Optimizer | AdamW, OneCycle peak 2e-4, wd 1e-4, clip 1.0, gamma 0.8 |
+| Steps | 15K (vkitti2_all) / 30K (chairs) · backbone frozen |
+
+## 6. Anticipated questions (first principles)
+
+**Q: Why can flow be queried at continuous coordinates at all?**
+The feature maps are discrete, but bilinear interpolation makes them a continuous
+function of position, and the decoder is an MLP applied to that function. The
+composition is defined at every real-valued (x, y) — integer pixels are just the
+special case a dense map hard-codes.
+
+**Q: Why freeze the backbone?**
+InfiniDepth stabilizes joint training over 800K steps on 8 GPUs. At our 15–30K-step
+budget the decoder chases shifting features and diverges (measured: EPE oscillating
+1.9→54 in early experiments). Frozen features = stationary target. It also means v3
+inherits v2's matching quality by construction.
+
+**Q: Why did training make things worse for weeks?**
+The original head predicted a correction scaled by image width (~1248×). To be
+harmless it had to output almost exactly zero; any noise became pixels of error. The
+convex head bounds outputs to blends of neighboring coarse-flow values — after this
+one change, the same recipe trained below its initialization for the first time.
+
+**Q: Why does FlyingChairs training beat VKITTI2 training on VKITTI2?**
+22k diverse pairs with large motions teach robustness; 12.7k frames from five driving
+scenes teach memorization. The error *tail* (occlusions, fast regions) dominates mean
+EPE, and chairs attacks exactly that. The 2.1k-frame version of this lesson was worse.
+
+**Q: Is sparse output an approximation of dense?**
+No — identical function, fewer evaluation points. Verified: sparse queries match the
+dense map at the same coordinates to 0.00 px.
+
+**Q: If sparse is fast, why is dense v3 slow?**
+Dense means 479k MLP evaluations (~293 ms); v2's convex upsample is one fused conv
+(~4 ms). v3 wins when you need *some* points, not *all* points — which is the actual
+requirement in registration, tracking, and mapping.
+
+**Q: What limits sub-pixel (1px) accuracy?**
+Until now the head literally could not see where a query sits inside its 8×8 coarse
+cell (features vary smoothly; global coords are too coarse a signal). The Fourier PE
+ablation injects exactly that signal. Beyond it: the 1/8 coarse flow itself bounds
+recoverable detail.
+
+**Q: Why batch size 4?**
+8 GB VRAM. The recipe is otherwise standard RAFT; on cluster GPUs batch 8–16 with the
+same settings is the expected scale-up.
+
+**Q: Can it output at higher resolution than the input?**
+Yes — query any grid (`target_h/w` are free). The Spring benchmark (GT at 2× input
+resolution) is the planned test only queryable decoders can take natively.
+
+## 7. Repository organization
 
 ```
 NeuFlow_v3/
@@ -116,7 +212,7 @@ NeuFlow_v3/
 Branches: `v1-dev` = corrected metrics + paper-aligned recipe · `v2-dev` = convex head,
 curriculum, PE (current). Remote: github.com/shrirag10/Neuflowv3.
 
-## 6. Next steps
+## 8. Next steps
 
 1. **Fourier PE ablation** — running; targets the 1px-accuracy gap.
 2. **Mixed chairs + vkitti2 training** — fixes finetune forgetting; expected to combine
