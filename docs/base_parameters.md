@@ -67,3 +67,29 @@ do not compare against them.
   the curve is still descending at 15K. Longer training is the obvious next lever.
 - Remaining gap to v2: 0.06 px EPE and 2.9 points of 1px accuracy.
 - Run: `train_v2dev.sh` (head=convex, stage=vkitti2_all, 15K steps).
+
+## FlyingChairs curriculum (2026-07-10): chairs-only BEATS v2 on mean EPE
+
+| Decoder training | Mean EPE | 1px acc | 3px acc |
+|---|---|---|---|
+| none (bilinear init) | 2.476 | 74.7% | 88.2% |
+| vkitti2_all only (15K) | 2.388 | 74.7% | 88.9% |
+| **chairs only (30K)** | **2.275** | 69.7% | 87.8% |
+| chairs -> vkitti2_all finetune (15K, lr 1e-4) | 2.499 | 74.6% | 88.6% |
+| NeuFlow v2 reference | 2.324 | 77.6% | 89.8% |
+
+- Chairs-pretrained decoder transfers to VKITTI2 at 2.275 px — below v2 — without seeing
+  a single driving frame. Large-motion training crushed the error tail; sub-pixel precision
+  (1px acc) is what it costs.
+- The naive finetune forgot the chairs robustness (2.28 -> 2.50) while recovering 1px acc.
+  lr 1e-4 x 15K on 12.7k pairs = catastrophic forgetting.
+- Dataset: streamed extraction via `scripts/stream_chairs_png.py` (PNG-converted, 46 GB,
+  images as .png — loader auto-falls-back from .ppm).
+- Runs: `train_chairs_v2dev.sh`, `train_finetune_v2dev.sh`.
+
+### Open levers (next session)
+1. **Mixed-dataset training** (chairs + vkitti2_all in one stage, RAFT-style) — attacks
+   forgetting directly; likely combines the 2.28 tail with the 74.7% precision.
+2. **Gentler finetune**: lr 2e-5, 3-5K steps, from chairs@30K.
+3. **Fourier PE + cell decoding** — the 1px-accuracy gap (74.7 vs 77.6) is the remaining
+   qualitative deficit vs v2's learned convex masks; sub-cell awareness is the missing input.
