@@ -55,6 +55,8 @@ class ImplicitFlowDecoder(nn.Module):
         hidden_list: list = None,
         window_size: int = 3,     # local-window size (must be odd)
         head_mode: str = 'regress',  # 'regress' (delta flow) | 'convex' (AnyFlow-style weights)
+        use_pe: bool = False,     # Fourier-encode the sub-cell offset (AnyFlow psi(x_q - v*))
+        pe_freqs: int = 4,
     ):
         super().__init__()
 
@@ -70,6 +72,8 @@ class ImplicitFlowDecoder(nn.Module):
         self.feat_dim_ctx = feat_dim_ctx
         self.window_size  = window_size
         self.head_mode    = head_mode
+        self.use_pe       = use_pe
+        self.pe_freqs     = pe_freqs
 
         # --- Local-window projectors: k*k*C → C ---
         # Do NOT call center-init here; NeuFlow.__init__ runs Xavier over all
@@ -98,7 +102,9 @@ class ImplicitFlowDecoder(nn.Module):
             nn.Linear(hidden_dim * 2, hidden_dim),
         )
 
-        mlp_in_dim = hidden_dim + feat_dim_s8 + 2 + 2   # 128+128+2+2 = 260
+        # PE adds sin/cos at pe_freqs frequencies for the (x,y) sub-cell offset
+        pe_dim = 2 * 2 * pe_freqs if use_pe else 0
+        mlp_in_dim = hidden_dim + feat_dim_s8 + 2 + 2 + pe_dim   # 260 (+16 with PE)
 
         if head_mode == 'convex':
             # AnyFlow-style: predict softmax weights over the k*k coarse-flow
@@ -301,7 +307,20 @@ class ImplicitFlowDecoder(nn.Module):
         coarse_norm[..., 0] /= W_full
         coarse_norm[..., 1] /= H_full
 
-        mlp_in = torch.cat([fused, f1_warped, coords_norm, coarse_norm], dim=-1)
+        mlp_parts = [fused, f1_warped, coords_norm, coarse_norm]
+
+        if self.use_pe:
+            # Sub-cell offset: where the query sits inside its s8 coarse cell,
+            # centered in [-0.5, 0.5). This is the sub-pixel signal the head
+            # cannot recover from coords_norm alone (AnyFlow's psi(x_q - v*)).
+            p = (query_coords.float() + 0.5) / 8.0 - 0.5   # s8 grid position
+            c = p - p.floor() - 0.5                         # [B, N, 2]
+            freqs = 2.0 ** torch.arange(self.pe_freqs, device=c.device, dtype=c.dtype)
+            ang = 2.0 * torch.pi * c.unsqueeze(-1) * freqs  # [B, N, 2, F]
+            pe = torch.cat([ang.sin(), ang.cos()], dim=-1).flatten(-2)  # [B, N, 4F]
+            mlp_parts.append(pe.to(fused.dtype))
+
+        mlp_in = torch.cat(mlp_parts, dim=-1)
 
         if self.head_mode == 'convex':
             # Candidates: k*k coarse-flow window values + the bilinear point sample.

@@ -68,6 +68,8 @@ def get_args_parser():
                         help='Use implicit decoder instead of convex upsampler')
     parser.add_argument('--head', default='regress', choices=['regress', 'convex'],
                         help='Implicit decoder head: direct delta regression or AnyFlow-style convex weights')
+    parser.add_argument('--pe', action='store_true',
+                        help='Fourier positional encoding of the sub-cell query offset')
     parser.add_argument('--sparse_loss', action='store_true',
                         help='Use sparse-point loss (InfiniDepth-style)')
     parser.add_argument('--num_sparse_points', default=8192, type=int,
@@ -114,7 +116,7 @@ def main(args):
         os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # model
-    model = NeuFlow(use_implicit=args.implicit, head_mode=args.head).to(device)
+    model = NeuFlow(use_implicit=args.implicit, head_mode=args.head, use_pe=args.pe).to(device)
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(
