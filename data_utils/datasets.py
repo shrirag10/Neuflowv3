@@ -481,5 +481,15 @@ def build_train_dataset(stage):
         aug_params = {'crop_size': crop_size, 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}
         train_dataset = VKITTI2(aug_params=aug_params)
 
+    elif stage == 'vkitti2_all':
+        # All same-trajectory variants: identical flow GT, different appearance
+        # (weather/time-of-day) — photometric augmentation for free, ~6x pairs.
+        crop_size = (256, 512)
+        aug_params = {'crop_size': crop_size, 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}
+        train_dataset = VKITTI2(
+            aug_params=aug_params,
+            variants=['clone', 'fog', 'rain', 'morning', 'sunset', 'overcast'],
+        )
+
     return train_dataset
 
