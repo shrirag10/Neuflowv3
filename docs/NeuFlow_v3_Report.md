@@ -53,6 +53,7 @@ All numbers from `scripts/eval_vkitti2.py` after the 2026-07-08 metrics fix.
 | v3 convex head | **FlyingChairs only (22.2k pairs)** | **2.275** | 69.7% | 87.8% |
 | v3 convex, chairs → vkitti2 finetune | both, sequential | 2.499 | 74.6% | 88.6% |
 | v3 convex + Fourier PE | FlyingChairs | 2.288 | 69.7% | 87.8% |
+| **v3 convex, MIXED training** | **chairs + VKITTI2 jointly** | **2.183** | **76.4%** | **89.6%** |
 
 Visual comparisons: `results/visuals/compare_*.png` (GT vs v2 vs v3 + error maps),
 `results/visuals/sparse_queries.png` (300 corner queries in one 1.6 ms call),
@@ -96,9 +97,9 @@ already-processed pair are ~200× cheaper than v2 recomputing. Dense v3 output i
 slower than v2 and is not the intended use.
 
 **Objective scorecard** (better EPE at less compute, edge-capable):
-- Mean EPE better than v2: ✅ (2.275 vs 2.324, chairs-only)
+- Mean EPE better than v2: ✅ (2.183 vs 2.324, mixed training — 6% better)
 - Less compute for the sparse use case: ✅ (~35 ms, O(N), fewer params)
-- Sub-pixel precision parity: ❌ open — PE ablation ruled OUT positional signal as the cause
+- Sub-pixel precision parity: ~✅ within 1.2 points (76.4% vs 77.6%); 3px at parity (89.6 vs 89.8)
 - Edge-device validation (Jetson): pending — next after PE
 
 ## 5. The query interface — exact numbers and how to use it
@@ -220,8 +221,8 @@ curriculum, PE (current). Remote: github.com/shrirag10/Neuflowv3.
 ## 8. Next steps
 
 1. ~~Fourier PE ablation~~ — done, null result; 1px gap is not positional.
-2. **Mixed chairs + vkitti2 training** — fixes finetune forgetting; expected to combine
-   2.28 EPE with ≥74.7% 1px accuracy.
+2. ~~Mixed chairs + vkitti2 training~~ — done: 2.183 EPE / 76.4% 1px, best result to date;
+   hypothesis confirmed (joint sampling prevents forgetting).
 3. **Jetson benchmark** — port `benchmark_edge.py`; the O(N) claim is strongest where
    dense flow genuinely cannot run.
 4. Thesis framing unchanged: queryable flow for registration/mapping — one backbone

@@ -105,3 +105,17 @@ Sub-cell Fourier encoding changed nothing — the 1px-accuracy gap vs v2 is NOT 
 missing positional signal. Keep `--pe` available (costs ~0 params) but do not expect gains
 on chairs-style data. Next hypotheses: 1/8 coarse-flow resolution bound; large-motion
 training never supervising sub-pixel discrimination. Runs: `train_chairs_pe.sh`.
+
+## Mixed-dataset training (2026-07-10): hypothesis confirmed — best result to date
+
+| Model | Mean EPE | 1px acc | 3px acc |
+|---|---|---|---|
+| **mix_chairs_vkitti2 30K (`neuflowv3_mix/step_030000`)** | **2.183** | **76.4%** | **89.6%** |
+| NeuFlow v2 reference | 2.324 | 77.6% | 89.8% |
+| chairs only | 2.275 | 69.7% | 87.8% |
+| vkitti2_all only | 2.388 | 74.7% | 88.9% |
+
+Joint sampling (34,958 pairs, 320x512 crop, `train_mix.sh`) retained the chairs error-tail
+robustness AND the driving-data sub-pixel precision that sequential finetuning forgot.
+Mean EPE 6% below v2; 1px acc within 1.2 points; 3px at parity. This is the checkpoint to
+present and to build on (Jetson benchmark, Spring eval, lab survey data).
