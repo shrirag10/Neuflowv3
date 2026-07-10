@@ -93,3 +93,15 @@ do not compare against them.
 2. **Gentler finetune**: lr 2e-5, 3-5K steps, from chairs@30K.
 3. **Fourier PE + cell decoding** — the 1px-accuracy gap (74.7 vs 77.6) is the remaining
    qualitative deficit vs v2's learned convex masks; sub-cell awareness is the missing input.
+
+## Fourier PE ablation (2026-07-10): null result
+
+| Model | Mean EPE | 1px acc | 3px acc |
+|---|---|---|---|
+| chairs 30K, convex (no PE) | 2.275 | 69.7% | 87.8% |
+| chairs 30K, convex + PE (`--pe`) | 2.288 | 69.7% | 87.8% |
+
+Sub-cell Fourier encoding changed nothing — the 1px-accuracy gap vs v2 is NOT caused by
+missing positional signal. Keep `--pe` available (costs ~0 params) but do not expect gains
+on chairs-style data. Next hypotheses: 1/8 coarse-flow resolution bound; large-motion
+training never supervising sub-pixel discrimination. Runs: `train_chairs_pe.sh`.
