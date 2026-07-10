@@ -43,11 +43,12 @@ def build_vkitti2_val_pairs(root, val_scenes=None):
 
 
 @torch.no_grad()
-def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=True, crop=None):
+def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=True, crop=None,
+             head='regress'):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     amp_enabled = device.type == 'cuda'
 
-    model = NeuFlow(use_implicit=implicit).to(device)
+    model = NeuFlow(use_implicit=implicit, head_mode=head).to(device)
     state_dict = my_load_weights(checkpoint)
     load_with_new_keys(
         model, state_dict,
@@ -147,7 +148,9 @@ if __name__ == '__main__':
     parser.add_argument('--no_implicit', action='store_true', help='Use convex upsampler (baseline)')
     parser.add_argument('--crop', type=int, nargs=2, default=None, metavar=('H', 'W'),
                         help='Center-crop images before eval, e.g. --crop 256 512')
+    parser.add_argument('--head', default='regress', choices=['regress', 'convex'],
+                        help='Implicit decoder head type (must match checkpoint)')
     args = parser.parse_args()
 
     evaluate(args.checkpoint, args.dataset_root, args.val_scenes, args.padding_factor,
-             implicit=not args.no_implicit, crop=args.crop)
+             implicit=not args.no_implicit, crop=args.crop, head=args.head)

@@ -66,6 +66,8 @@ def get_args_parser():
     # model mode
     parser.add_argument('--implicit', action='store_true',
                         help='Use implicit decoder instead of convex upsampler')
+    parser.add_argument('--head', default='regress', choices=['regress', 'convex'],
+                        help='Implicit decoder head: direct delta regression or AnyFlow-style convex weights')
     parser.add_argument('--sparse_loss', action='store_true',
                         help='Use sparse-point loss (InfiniDepth-style)')
     parser.add_argument('--num_sparse_points', default=8192, type=int,
@@ -112,7 +114,7 @@ def main(args):
         os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # model
-    model = NeuFlow(use_implicit=args.implicit).to(device)
+    model = NeuFlow(use_implicit=args.implicit, head_mode=args.head).to(device)
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -169,7 +171,9 @@ def main(args):
         # gradients from the decoder and isn't corrupted (safe end-to-end start).
         if (args.implicit and hasattr(model_without_ddp, 'implicit_decoder_module')
                 and not args.no_zero_init_decoder_head):
-            out_layer = model_without_ddp.implicit_decoder_module.flow_head.layers[-1]
+            dec = model_without_ddp.implicit_decoder_module
+            head = dec.convex_head if dec.head_mode == 'convex' else dec.flow_head
+            out_layer = head.layers[-1]
             torch.nn.init.zeros_(out_layer.weight)
             torch.nn.init.zeros_(out_layer.bias)
 

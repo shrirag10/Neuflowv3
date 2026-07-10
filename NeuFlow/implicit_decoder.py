@@ -54,11 +54,14 @@ class ImplicitFlowDecoder(nn.Module):
         hidden_dim: int = 128,    # hidden dim throughout fusion
         hidden_list: list = None,
         window_size: int = 3,     # local-window size (must be odd)
+        head_mode: str = 'regress',  # 'regress' (delta flow) | 'convex' (AnyFlow-style weights)
     ):
         super().__init__()
 
         if window_size % 2 != 1:
             raise ValueError(f'window_size must be odd, got {window_size}')
+        if head_mode not in ('regress', 'convex'):
+            raise ValueError(f'head_mode must be regress|convex, got {head_mode}')
 
         if hidden_list is None:
             hidden_list = [256, 128, 64]
@@ -66,6 +69,7 @@ class ImplicitFlowDecoder(nn.Module):
         self.feat_dim_s8  = feat_dim_s8
         self.feat_dim_ctx = feat_dim_ctx
         self.window_size  = window_size
+        self.head_mode    = head_mode
 
         # --- Local-window projectors: k*k*C → C ---
         # Do NOT call center-init here; NeuFlow.__init__ runs Xavier over all
@@ -94,12 +98,30 @@ class ImplicitFlowDecoder(nn.Module):
             nn.Linear(hidden_dim * 2, hidden_dim),
         )
 
-        # MLP: cat([h3 | feat1_warped | coords_norm | coarse_norm]) → delta
-        self.flow_head = MLP(
-            in_dim=hidden_dim + feat_dim_s8 + 2 + 2,   # 128+128+2+2 = 260
-            out_dim=2,
-            hidden_list=hidden_list,
-        )
+        mlp_in_dim = hidden_dim + feat_dim_s8 + 2 + 2   # 128+128+2+2 = 260
+
+        if head_mode == 'convex':
+            # AnyFlow-style: predict softmax weights over the k*k coarse-flow
+            # neighborhood plus the bilinear point sample as candidate k*k+1.
+            # BILINEAR_PRIOR biases the softmax toward the bilinear candidate so a
+            # zero-init head starts as (near-exact) bilinear upsampling — the
+            # 2.48-EPE operating point — instead of an arbitrary blend.
+            k2 = window_size ** 2
+            self.convex_head = MLP(
+                in_dim=mlp_in_dim,
+                out_dim=k2 + 1,
+                hidden_list=hidden_list,
+            )
+            prior = torch.zeros(k2 + 1)
+            prior[k2] = 9.0   # softmax bilinear weight ~0.9989 at zero-init (9 window slots share ~0.0011)
+            self.register_buffer('convex_prior', prior)
+        else:
+            # MLP: cat([h3 | feat1_warped | coords_norm | coarse_norm]) → delta
+            self.flow_head = MLP(
+                in_dim=mlp_in_dim,
+                out_dim=2,
+                hidden_list=hidden_list,
+            )
 
     def reset_window_projections_to_center(self):
         """Set win_proj_* to identity on the center cell, zero elsewhere.
@@ -185,6 +207,39 @@ class ImplicitFlowDecoder(nn.Module):
 
         return out_proj(sampled.to(out_proj.weight.dtype))  # [B, N, C]
 
+    @staticmethod
+    def _sample_window_raw(
+        feat_map: torch.Tensor,
+        coords_norm: torch.Tensor,
+        window_size: int,
+    ) -> torch.Tensor:
+        """Sample a k×k local window around each query point, no projection.
+
+        Same geometry as _sample_local_window but returns the raw values:
+            [B, N, k*k, C]
+        """
+        B, C, Hf, Wf = feat_map.shape
+        N = coords_norm.shape[1]
+        r = window_size // 2
+        device = feat_map.device
+
+        oy = torch.arange(-r, r + 1, device=device).float() * (2.0 / Hf)
+        ox = torch.arange(-r, r + 1, device=device).float() * (2.0 / Wf)
+        grid_oy, grid_ox = torch.meshgrid(oy, ox, indexing='ij')
+        offsets = torch.stack([grid_ox.flatten(), grid_oy.flatten()], dim=-1)  # [k*k, 2]
+        k2 = offsets.shape[0]
+
+        win_coords = coords_norm.float().unsqueeze(2) + offsets[None, None]
+        win_coords = win_coords.clamp(-1 + 1e-6, 1 - 1e-6)
+
+        flat = win_coords.reshape(B, 1, N * k2, 2).to(feat_map.dtype)
+        sampled = F.grid_sample(
+            feat_map, flat,
+            mode='bilinear', padding_mode='border', align_corners=False
+        )  # [B, C, 1, N*k*k]
+
+        return sampled.squeeze(2).permute(0, 2, 1).reshape(B, N, k2, C)
+
     def _fuse_features(self, feat_s16, feat_s8, ctx_s8):
         # InfiniDepth Eq. 3 — two gated residual fusion steps
         h2 = self.ffn1(feat_s8 + torch.sigmoid(self.gate1) * self.proj_ctx(ctx_s8))
@@ -247,15 +302,31 @@ class ImplicitFlowDecoder(nn.Module):
         coarse_norm[..., 1] /= H_full
 
         mlp_in = torch.cat([fused, f1_warped, coords_norm, coarse_norm], dim=-1)
-        delta_norm = self.flow_head(mlp_in)
-        if zero_residual:
-            delta_norm = torch.zeros_like(delta_norm)
 
-        delta_flow = delta_norm.clone().float()
-        delta_flow[..., 0] = delta_norm[..., 0] * W_full
-        delta_flow[..., 1] = delta_norm[..., 1] * H_full
+        if self.head_mode == 'convex':
+            # Candidates: k*k coarse-flow window values + the bilinear point sample.
+            win_flow = self._sample_window_raw(coarse_flow, coords_norm, self.window_size)
+            win_flow = win_flow.float()
+            win_flow[..., 0] = win_flow[..., 0] * (W_full / W8)
+            win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
+            candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)  # [B,N,k2+1,2]
 
-        flow = coarse_at_q + delta_flow
+            logits = self.convex_head(mlp_in).float() + self.convex_prior
+            if zero_residual:
+                logits = torch.zeros_like(logits) + self.convex_prior
+            weights = torch.softmax(logits, dim=-1)  # [B, N, k2+1]
+
+            flow = (weights.unsqueeze(-1) * candidates).sum(dim=2)  # [B, N, 2]
+        else:
+            delta_norm = self.flow_head(mlp_in)
+            if zero_residual:
+                delta_norm = torch.zeros_like(delta_norm)
+
+            delta_flow = delta_norm.clone().float()
+            delta_flow[..., 0] = delta_norm[..., 0] * W_full
+            delta_flow[..., 1] = delta_norm[..., 1] * H_full
+
+            flow = coarse_at_q + delta_flow
 
         if dense_query:
             flow = flow.reshape(B, target_h, target_w, 2).permute(0, 3, 1, 2)

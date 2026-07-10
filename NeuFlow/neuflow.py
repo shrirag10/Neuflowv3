@@ -17,10 +17,11 @@ from huggingface_hub import PyTorchModelHubMixin
 class NeuFlow(torch.nn.Module,
               PyTorchModelHubMixin,
               repo_url="https://github.com/neufieldrobotics/NeuFlow_v2", license="apache-2.0", pipeline_tag="image-to-image"):
-    def __init__(self, use_implicit: bool = True):
+    def __init__(self, use_implicit: bool = True, head_mode: str = 'regress'):
         super(NeuFlow, self).__init__()
 
         self.use_implicit = use_implicit
+        self.head_mode = head_mode
 
         self.backbone = backbone_v7.CNNEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
         
@@ -56,6 +57,7 @@ class NeuFlow(torch.nn.Module,
                 hidden_dim=config.feature_dim_s16,
                 hidden_list=config.implicit_mlp_hidden_list,
                 window_size=config.implicit_window_size,
+                head_mode=head_mode,
             )
         else:
             # ---- Legacy convex-upsampler path ----
