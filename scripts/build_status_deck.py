@@ -362,11 +362,17 @@ def main():
              'boundaries; AdamW with a one-cycle schedule peaking at\n'
              '2e-4; backbone frozen throughout.', 12, False, INK)
     s.shapes.add_picture('results/visuals/query_gui_selftest.png', Inches(7.3), Inches(1.7), width=Inches(5.4))
-    add_text(s, 7.3, 3.55, 5.4, 1.7,
-             'Interactive tool (PyQt5, in the repository): click any pixel\n'
-             'for its flow; grid, boundary-adaptive, and dense-overlay\n'
-             'modes; CSV export. Feasible only because of the two-pass\n'
-             'design — every interaction reuses the cached backbone state.', 11, False, INK)
+    add_text(s, 7.3, 3.55, 5.4, 2.5,
+             'Interactive tool (PyQt5, in the repository):\n'
+             '•  Click any pixel for its flow; grid, boundary-adaptive,\n'
+             '    and dense-overlay modes; CSV export.\n'
+             '•  Region window: drag a rectangle — flow computed\n'
+             '    only inside the selection.\n'
+             '•  Video and YouTube sources with frame stepping and\n'
+             '    real-time playback: live flow-based motion boxes at\n'
+             '    47 FPS (640×360), ego-motion compensated.\n'
+             '•  System-resources tab: live FPS, latency, GPU, VRAM,\n'
+             '    CPU, RAM graphs — VRAM stays flat while interacting.', 10.5, False, INK)
     takeaway(s, 'The same API serves a robot asking for 800 correspondences and a human inspecting one pixel.')
     footer(s, i)
 
