@@ -91,6 +91,11 @@ Key findings:
 | Extra queries on same pair | full recompute (37 ms) | 1.6–2.2 ms |
 | Inference VRAM (sparse) | — | ~2.2 GB |
 
+**Video-pipeline throughput** (60 frames of a 640×360 YouTube stream, end-to-end,
+`scripts/benchmark_fps.py`): v3 sparse-800 **63.6 FPS** · v2 dense 60.3 FPS ·
+v3 + live motion boxes 47.1 FPS · v3 dense 5.8 FPS. At video resolution the sparse
+mode outpaces v2's full map while answering targeted questions.
+
 The operating point that matters for edge robotics: **v3 answers sparse queries at the
 same latency v2 needs for a full frame** — and any *additional* queries on an
 already-processed pair are ~200× cheaper than v2 recomputing. Dense v3 output is 8.8×
