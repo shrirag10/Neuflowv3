@@ -336,6 +336,10 @@ def main():
              'each further question costs v3\n'
              '1.6 ms; v2 has no smaller unit of\n'
              'work than the full 37 ms frame.\n\n'
+             'Video pipeline, 640×360 stream:\n'
+             'v3 sparse-800:  63.6 FPS\n'
+             'v2 dense:  60.3 FPS\n'
+             'v3 + motion boxes:  47.1 FPS\n\n'
              'Parameters: 7.83 M (v3)\n'
              'vs 9.03 M (v2).', 11.5, False, INK)
     takeaway(s, 'v2 sells flow only by the full frame; v3 sells it by the question — at the same price for the first one and ~20× less for each after.')
