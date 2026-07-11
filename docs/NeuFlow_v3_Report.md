@@ -128,12 +128,21 @@ flow  = model.decode_queries(state, target_h=H, target_w=W)     # dense grid at 
 flow  = model.decode_queries(state, adaptive_n=1000)            # auto-allocate at motion boundaries
 ```
 
-**Interactive GUI (viability: confirmed, prototype working).** `scripts/query_gui.py`
-is a PyQt5 tool: load an image pair, the backbone runs once, then every left-click
-queries flow at that pixel (arrow + value overlay, per-click latency in the status
-bar); `G` decodes a 32×32 grid, right-click clears. Self-test renders offscreen
-(`--selftest`). The two-pass API is what makes this possible — v2 would need a full
-37 ms recompute per interaction; v3 answers clicks from cache in ~1.6 ms.
+**Interactive GUI** (`scripts/query_gui.py`, PyQt5 — all features self-tested offscreen):
+- Click-to-query with arrows/values; uniform grid; boundary-adaptive; dense overlay.
+- **Region query window**: drag-select a rectangle — flow is computed only inside it
+  (per-pixel within the window, auto-strided above 80k points).
+- **Video sources**: local files and YouTube URLs (via yt-dlp); N/P frame stepping.
+- **Real-time playback with motion detection**: Space plays the video through the
+  pipeline continuously; moving regions are boxed live from the coarse flow with the
+  median (ego-motion) subtracted — zero additional decode cost. ~39 FPS end-to-end on
+  the self-test clip at 1024-width.
+- **System resources tab**: live 2 Hz graphs of pipeline FPS, coarse-pass latency,
+  GPU utilization, VRAM, CPU, and RAM — VRAM stays flat during interaction, showing
+  the cached two-pass design at work.
+- CSV export of queries, screenshot save, checkpoint switching.
+The two-pass API is what makes all of this possible — v2 would need a full 37 ms
+recompute per interaction; v3 answers from cache in ~1.6 ms.
 
 **Training configuration (current):**
 
