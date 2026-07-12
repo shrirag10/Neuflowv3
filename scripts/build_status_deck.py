@@ -19,7 +19,7 @@ MUTED  = RGBColor(0x8A, 0x8A, 0x8A)   # gray: footers, secondary
 BOX_DK = RGBColor(0x33, 0x33, 0x33)   # flowchart: new/changed blocks
 BOX_LT = RGBColor(0xEF, 0xEF, 0xEF)   # flowchart: unchanged blocks
 WHITE  = RGBColor(0xFF, 0xFF, 0xFF)
-FONT   = 'Calibri'
+FONT   = 'Georgia'
 OUT    = 'docs/NeuFlow_v3_status.pptx'
 
 
@@ -46,7 +46,7 @@ def header(s, kicker, title):
 
 
 def takeaway(s, text):
-    add_text(s, 1.05, 6.32, 11.3, 0.6, 'Takeaway   ' + text, 11.5, True, ACCENT)
+    return  # takeaway strips removed by request
 
 
 def footer(s, num):
@@ -297,6 +297,21 @@ def main():
     takeaway(s, 'The best v3 model beats v2 on mean accuracy and matches its precision — while remaining queryable and smaller.')
     footer(s, i)
 
+    # ============================================ 8b · Head-to-head
+    s, i = slide()
+    header(s, 'RESULTS · DIRECT COMPARISON', 'NeuFlow v2 and v3, side by side on the same input')
+    s.shapes.add_picture('results/visuals/head_to_head.png', Inches(1.35), Inches(1.55), width=Inches(10.6))
+    footer(s, i)
+
+    # ============================================ 8c · FlyingChairs examples
+    s, i = slide()
+    header(s, 'RESULTS · TRAINING-DOMAIN EXAMPLES', 'FlyingChairs pairs: input, ground truth, and both models')
+    s.shapes.add_picture('results/visuals/chairs_examples.png', Inches(0.9), Inches(1.75), width=Inches(11.5))
+    add_text(s, 0.9, 6.35, 11.5, 0.5,
+             'Large, varied synthetic displacements — the motion statistics that taught the decoder its error-tail robustness.',
+             11, False, MUTED)
+    footer(s, i)
+
     # ============================================ 9 · Aggregate
     s, i = slide()
     header(s, 'RESULTS · SUMMARY', 'All training regimes against the v2 reference')
@@ -345,6 +360,24 @@ def main():
     takeaway(s, 'v2 sells flow only by the full frame; v3 sells it by the question — at the same price for the first one and ~20× less for each after.')
     footer(s, i)
 
+    # ============================================ 10b · Video throughput
+    s, i = slide()
+    header(s, 'EFFICIENCY · VIDEO PIPELINE', 'Throughput on a real video stream, end to end')
+    s.shapes.add_picture('results/fps_video.png', Inches(1.0), Inches(1.8), width=Inches(8.2))
+    add_text(s, 9.5, 1.95, 3.2, 4.0,
+             'Sixty frame pairs of a 640×360\n'
+             'YouTube driving video, decoded,\n'
+             'transferred, and processed —\n'
+             'identical frames for every mode.\n\n'
+             'v3 answering 800 targeted\n'
+             'queries per pair outpaces v2\n'
+             'producing its full map, and the\n'
+             'live motion-detection mode\n'
+             'holds 47 FPS — three times\n'
+             'faster than a typical 15 FPS\n'
+             'survey camera.', 12, False, INK)
+    footer(s, i)
+
     # ============================================ 11 · Interface + GUI
     s, i = slide()
     header(s, 'INTERFACE', 'Querying in practice: sizes, API, and interactive demonstration')
@@ -374,6 +407,23 @@ def main():
              '•  System-resources tab: live FPS, latency, GPU, VRAM,\n'
              '    CPU, RAM graphs — VRAM stays flat while interacting.', 10.5, False, INK)
     takeaway(s, 'The same API serves a robot asking for 800 correspondences and a human inspecting one pixel.')
+    footer(s, i)
+
+    # ============================================ 11b · GUI in action
+    s, i = slide()
+    header(s, 'INTERFACE · THE TOOL IN ACTION', 'Interactive querying and real-time motion detection')
+    s.shapes.add_picture('results/visuals/query_gui_selftest.png', Inches(0.75), Inches(1.85), width=Inches(6.0))
+    add_text(s, 0.75, 3.85, 6.0, 0.9,
+             'Adaptive queries over a dense overlay with the magnitude\n'
+             'legend — several hundred answers from one cached state.', 10.5, False, MUTED)
+    s.shapes.add_picture('results/visuals/query_gui_motion.png', Inches(7.0), Inches(1.85), width=Inches(6.0))
+    add_text(s, 7.0, 3.85, 6.0, 0.9,
+             'Playback with live motion detection: the translating region\n'
+             'is boxed from the coarse flow at zero additional decode cost.', 10.5, False, MUTED)
+    add_text(s, 0.75, 4.9, 11.8, 1.2,
+             'A model selector switches between v3 and the v2 baseline in place: with v2, every interaction requires the full dense map\n'
+             'to have been computed; with v3, the same interactions are answered from the cached coarse state in ~1.6 ms. The difference\n'
+             'between the two architectures is directly felt in the tool.', 11.5, False, INK)
     footer(s, i)
 
     # ============================================ 12 · Objectives
