@@ -252,13 +252,14 @@ def main():
 
     # ============================================ 7 · Stage 2: chairs
     s, i = slide()
-    header(s, 'RESULTS', 'Trained on FlyingChairs only')
+    header(s, 'RESULTS', 'Trained on FlyingChairs only, evaluated on VKITTI2')
     s.shapes.add_picture('results/visuals/stage_chairs.png', Inches(0.75), Inches(1.6), width=Inches(8.7))
     add_text(s, 9.7, 1.7, 3.0, 4.4,
-             '22,232 synthetic pairs with\n'
-             'no roads, no vehicles, and\n'
-             'no shared statistics with\n'
-             'the evaluation domain.\n\n'
+             'Important: the images here are\n'
+             'the EVALUATION set (VKITTI2).\n'
+             'Training saw only synthetic\n'
+             'chairs, 22,232 pairs, no roads\n'
+             'or vehicles anywhere.\n\n'
              '2.28 px EPE on VKITTI2 -\n'
              'below NeuFlow v2 (2.32).\n'
              'Motion diversity, not domain\n'
@@ -274,7 +275,7 @@ def main():
 
     # ============================================ 8 · Stage 3: mixed (best)
     s, i = slide()
-    header(s, 'RESULTS', 'Trained on both, mixed in every batch (best model)')
+    header(s, 'RESULTS', 'Trained on both datasets jointly, evaluated on VKITTI2 (best model)')
     s.shapes.add_picture('results/visuals/stage_mixed.png', Inches(0.75), Inches(1.6), width=Inches(8.7))
     add_text(s, 9.7, 1.7, 3.0, 4.4,
              '34,958 pairs, both datasets\n'
