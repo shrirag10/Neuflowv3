@@ -135,6 +135,69 @@ class FlowSession:
         return out, (time.perf_counter() - t0) * 1000
 
 
+class V2Session:
+    """NeuFlow v2 baseline behind the same interface: the dense map is computed
+    up front (its only mode); every 'query' afterwards is a lookup into it."""
+
+    def __init__(self, checkpoint='neuflow_mixed.pth'):
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.checkpoint = checkpoint
+        self.model = NeuFlow(use_implicit=False).to(self.device)
+        load_with_new_keys(self.model, my_load_weights(checkpoint),
+                           missing_ok_substrings=['implicit_decoder_module', 'win_proj_'],
+                           unexpected_ok_substrings=[])
+        self.model.eval()
+        self.state = None
+        self.img1_np = None
+        self.coarse_ms = None
+        self._bhwd = None
+        self.flow_map = None
+
+    def set_pair_arrays(self, img1_np, img2_np):
+        self.img1_np = np.ascontiguousarray(img1_np)
+        img1 = torch.from_numpy(self.img1_np).permute(2, 0, 1).float()[None]
+        img2 = torch.from_numpy(np.ascontiguousarray(img2_np)).permute(2, 0, 1).float()[None]
+        padder = frame_utils.InputPadder(img1.shape, padding_factor=16)
+        a, b = padder.pad(img1.to(self.device), img2.to(self.device))
+        if self._bhwd != (a.shape[-2], a.shape[-1]):
+            self.model.init_bhwd(1, a.shape[-2], a.shape[-1], self.device)
+            self._bhwd = (a.shape[-2], a.shape[-1])
+        t0 = time.perf_counter()
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.device.type == 'cuda'):
+            out = self.model(a, b)[-1]
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize()
+        self.coarse_ms = (time.perf_counter() - t0) * 1000   # here: full dense map
+        self.flow_map = padder.unpad(out[0]).float().cpu().permute(1, 2, 0).numpy()
+        self.state = 'dense'   # sentinel: interactions allowed
+
+    def set_pair(self, p1, p2):
+        self.set_pair_arrays(cv2.cvtColor(cv2.imread(p1), cv2.COLOR_BGR2RGB),
+                             cv2.cvtColor(cv2.imread(p2), cv2.COLOR_BGR2RGB))
+
+    def query(self, points_xy):
+        h, w = self.flow_map.shape[:2]
+        out = np.array([self.flow_map[min(int(round(y)), h - 1), min(int(round(x)), w - 1)]
+                        for x, y in points_xy])
+        return out, 0.0   # lookup — the full map was already paid for
+
+    def adaptive(self, n):
+        h, w = self.flow_map.shape[:2]
+        mag = np.linalg.norm(self.flow_map, axis=-1)
+        gy, gx = np.gradient(mag)
+        g = np.abs(gx) + np.abs(gy)
+        idx = np.argsort(g.ravel())[-n:]
+        ys, xs = np.unravel_index(idx, g.shape)
+        q = np.stack([xs, ys], -1).astype(np.float32)
+        return q, self.flow_map[ys, xs], 0.0
+
+    def region(self, x0, y0, w, h, **kw):
+        return self.flow_map[y0:y0 + h, x0:x0 + w], 1, 0.0
+
+    def dense(self, **kw):
+        return self.flow_map, 0.0
+
+
 class VideoSource:
     """Frame-pair navigation over a local video file or a YouTube stream."""
 
@@ -344,6 +407,13 @@ class QueryWindow(QMainWindow):
     def _build_toolbar(self):
         tb = QToolBar('Query settings')
         self.addToolBar(tb)
+        from PyQt5.QtWidgets import QComboBox
+        tb.addWidget(QLabel(' Model: '))
+        self.model_combo = QComboBox()
+        self.model_combo.addItems(['v3 mixed (queryable)', 'v2 baseline (dense-only)'])
+        self.model_combo.currentIndexChanged.connect(self.switch_model)
+        tb.addWidget(self.model_combo)
+        tb.addSeparator()
         self.region_act = QAction('Region select: OFF', self)
         self.region_act.setCheckable(True)
         self.region_act.toggled.connect(
@@ -408,10 +478,23 @@ class QueryWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, 'Error', f'Could not open video:\n{e}')
 
+    def switch_model(self, idx):
+        try:
+            self.session = FlowSession() if idx == 0 else V2Session()
+        except Exception as e:
+            QMessageBox.critical(self, 'Error', f'Could not load model:\n{e}')
+            return
+        name = 'v3 (queryable, mixed training)' if idx == 0 else 'v2 (dense-only baseline)'
+        if self.video is not None:
+            self.show_video_pair(self.video.idx)
+        elif getattr(self, '_last_pair', None):
+            self.load_pair_paths(*self._last_pair)
+        self.statusBar().showMessage(f'Switched to {name}')
+
     def show_video_pair(self, idx):
         f1, f2 = self.video.pair(idx)
         self.session.set_pair_arrays(f1, f2)
-        if self.motion_act.isChecked():
+        if self.motion_act.isChecked() and isinstance(self.session, FlowSession):
             self.motion_boxes, _ = detect_motion(self.session.state, self.thresh_spin.value())
         else:
             self.motion_boxes = []
@@ -448,6 +531,7 @@ class QueryWindow(QMainWindow):
             f'{len(self.motion_boxes)} moving regions (flow-based, ego-motion compensated)')
 
     def load_pair_paths(self, p1, p2):
+        self._last_pair = (p1, p2)
         try:
             self.session.set_pair(p1, p2)
         except Exception as e:
@@ -705,6 +789,18 @@ def selftest(session, win, outdir='results/visuals'):
     win.play_act.setChecked(False)
     win.label.pixmap().save(f'{outdir}/query_gui_motion.png')
 
+    # v2 baseline mode: switch, reload, lookup-query
+    win.video = None
+    win.load_pair_paths(
+        'datasets/vkitti2/Scene18/clone/frames/rgb/Camera_0/rgb_00100.jpg',
+        'datasets/vkitti2/Scene18/clone/frames/rgb/Camera_0/rgb_00101.jpg')
+    win.model_combo.setCurrentIndex(1)
+    v2_ok = getattr(win.session, 'flow_map', None) is not None
+    if v2_ok:
+        f, _ = win.session.query([(100, 100)])
+        v2_ok = f.shape == (1, 2)
+    win.model_combo.setCurrentIndex(0)
+
     ok_ytdlp = True
     try:
         import yt_dlp  # noqa: F401
@@ -713,7 +809,8 @@ def selftest(session, win, outdir='results/visuals'):
 
     print(f'selftest OK: click {ms1:.1f} ms · adaptive · region window · dense overlay · '
           f'video stepping {"OK" if ok_video else "FAIL"} · motion boxes {n_boxes} · '
-          f'playback {fps:.1f} FPS · yt-dlp {"available" if ok_ytdlp else "MISSING"}')
+          f'playback {fps:.1f} FPS · v2 baseline mode {"OK" if v2_ok else "FAIL"} · '
+          f'yt-dlp {"available" if ok_ytdlp else "MISSING"}')
 
 
 def main():
