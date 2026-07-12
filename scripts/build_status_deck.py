@@ -95,6 +95,25 @@ def arrow(s, x1, y1, x2, y2):
     return conn
 
 
+
+def framed_pic(s, path, x, y, w, h):
+    s.shapes.add_picture(path, Inches(x), Inches(y), width=Inches(w), height=Inches(h))
+    fr = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    fr.fill.background()
+    fr.line.color.rgb = INK
+    fr.line.width = Pt(1.2)
+    fr.shadow.inherit = False
+
+
+def scene_grid(s, panels):
+    """panels: list of 4 (path, label) in reading order; wide 3.31:1 images."""
+    W, H = 5.75, 1.74
+    pos = [(0.75, 1.95), (6.85, 1.95), (0.75, 4.28), (6.85, 4.28)]
+    for (path, label), (x, y) in zip(panels, pos):
+        add_text(s, x, y - 0.32, W, 0.3, label, 11, True, INK)
+        framed_pic(s, path, x, y, W, H)
+
+
 def main():
     p = Presentation()
     p.slide_width = Inches(13.333)
@@ -214,87 +233,51 @@ def main():
     # ============================================ 5 · Stage 0: untrained
     s, i = slide()
     header(s, 'RESULTS', 'Starting point: no training at all')
-    s.shapes.add_picture('results/visuals/stage_untrained.png', Inches(0.75), Inches(1.6), width=Inches(8.7))
-    add_text(s, 9.7, 1.7, 3.0, 4.4,
-             'With zero trained decoder\n'
-             'weights, v3 reproduces\n'
-             'bilinear upsampling of the\n'
-             'coarse flow: 2.48 px EPE,\n'
-             '0.15 px behind v2, with\n'
-             'querying already functional\n'
-             'and exact.\n\n'
-             'Every subsequent training\n'
-             'run is accepted only if it\n'
-             'improves on this number.', 12, False, INK)
-    takeaway(s, 'Queryability costs +0.15 px EPE before a single gradient step. Training must earn its keep against this baseline.')
+    scene_grid(s, [
+        ('results/panels/scene_input.png', 'Input, VKITTI2 Scene18'),
+        ('results/panels/scene_gt.png', 'Ground truth'),
+        ('results/panels/scene_v2.png', 'NeuFlow v2, EPE 2.11 px'),
+        ('results/panels/scene_v3_untrained.png', 'NeuFlow v3 untrained, EPE 2.26 px'),
+    ])
+    add_text(s, 0.75, 6.35, 11.9, 0.75, 'No decoder training at all: the bilinear-prior init already produces usable flow (2.48 px EPE over the full validation set,\n0.15 px behind v2), with querying functional and exact. Every training run afterwards had to beat this to be accepted.', 11.5, False, INK)
     footer(s, i)
 
     # ============================================ 6 · Stage 1: vkitti2
     s, i = slide()
     header(s, 'RESULTS', 'Trained on VKITTI2 only')
-    s.shapes.add_picture('results/visuals/stage_vkitti2.png', Inches(0.75), Inches(1.6), width=Inches(8.7))
-    add_text(s, 9.7, 1.7, 3.0, 4.4,
-             'Six same-trajectory weather\n'
-             'variants share identical flow\n'
-             'ground truth. appearance\n'
-             'augmentation at no labeling\n'
-             'cost. 12,726 pairs.\n\n'
-             '2.39 px EPE: the first\n'
-             'checkpoint in this project\n'
-             'to improve on its own\n'
-             'initialization, with no\n'
-             'late-training collapse.\n\n'
-             'Limitation: five scenes\n'
-             'teach scene-specific detail;\n'
-             'the error tail barely moves.', 12, False, INK)
-    takeaway(s, 'A correct head plus sufficient data variety turned training from harmful to net-positive: 2.48 to 2.39 px.')
+    scene_grid(s, [
+        ('results/panels/scene_input.png', 'Input, VKITTI2 Scene18'),
+        ('results/panels/scene_gt.png', 'Ground truth'),
+        ('results/panels/scene_v2.png', 'NeuFlow v2, EPE 2.11 px'),
+        ('results/panels/scene_v3_vkitti2.png', 'NeuFlow v3 (VKITTI2-trained), EPE 2.07 px'),
+    ])
+    add_text(s, 0.75, 6.35, 11.9, 0.75, 'Trained on 12,726 pairs: six VKITTI2 weather variants that share identical flow ground truth. Full-set result 2.39 px EPE,\nthe first checkpoint to improve on its own initialization, with no late-training collapse.', 11.5, False, INK)
     footer(s, i)
 
     # ============================================ 7 · Stage 2: chairs
     s, i = slide()
-    header(s, 'RESULTS', 'Trained on FlyingChairs only, evaluated on VKITTI2')
-    s.shapes.add_picture('results/visuals/stage_chairs.png', Inches(0.75), Inches(1.6), width=Inches(8.7))
-    add_text(s, 9.7, 1.7, 3.0, 4.4,
-             'Important: the images here are\n'
-             'the EVALUATION set (VKITTI2).\n'
-             'Training saw only synthetic\n'
-             'chairs, 22,232 pairs, no roads\n'
-             'or vehicles anywhere.\n\n'
-             '2.28 px EPE on VKITTI2 -\n'
-             'below NeuFlow v2 (2.32).\n'
-             'Motion diversity, not domain\n'
-             'familiarity, is what the\n'
-             'decoder needed: varied large\n'
-             'displacements suppress the\n'
-             'error tail that dominates\n'
-             'mean EPE.\n\n'
-             'Cost: 1 px accuracy drops\n'
-             'to 69.7% (v2: 77.6%).', 12, False, INK)
-    takeaway(s, 'The decoder generalizes: trained without a single driving frame, it outperforms v2 on driving data.')
+    header(s, 'RESULTS', 'Trained and evaluated on FlyingChairs')
+    cw, chh = 2.92, 2.19
+    xs = [0.75, 3.87, 6.99, 10.11]
+    labels = ['Input, chairs val 00006', 'Ground truth', 'NeuFlow v2, EPE 1.42 px', 'NeuFlow v3 (chairs), EPE 1.35 px']
+    paths = ['results/panels/chairs_input.png', 'results/panels/chairs_gt.png',
+             'results/panels/chairs_v2.png', 'results/panels/chairs_v3.png']
+    for x, lb, pt_ in zip(xs, labels, paths):
+        add_text(s, x, 2.28, cw, 0.3, lb, 10.5, True, INK)
+        framed_pic(s, pt_, x, 2.6, cw, chh)
+    add_text(s, 0.75, 6.35, 11.9, 0.75, 'Across the 640 held-out chairs validation pairs: v2 2.24 px EPE (78.7% within 1 px), chairs-trained v3 2.40 px (76.6%).\nThe same model transfers to VKITTI2 driving scenes at 2.28 px, below v2 there, without ever seeing a road in training.', 11.5, False, INK)
     footer(s, i)
 
     # ============================================ 8 · Stage 3: mixed (best)
     s, i = slide()
-    header(s, 'RESULTS', 'Trained on both datasets jointly, evaluated on VKITTI2 (best model)')
-    s.shapes.add_picture('results/visuals/stage_mixed.png', Inches(0.75), Inches(1.6), width=Inches(8.7))
-    add_text(s, 9.7, 1.7, 3.0, 4.4,
-             '34,958 pairs, both datasets\n'
-             'sampled jointly in every\n'
-             'batch (sequential finetuning\n'
-             'had failed at 2.50 px -\n'
-             'the second dataset erased\n'
-             'the first).\n\n'
-             '2.18 px EPE. 6% better\n'
-             'than v2.\n'
-             '76.4% 1 px accuracy -\n'
-             'within 1.2 points of v2.\n'
-             '89.6% 3 px accuracy -\n'
-             'at parity.\n\n'
-             'Chairs contributes tail\n'
-             'robustness; VKITTI2\n'
-             'contributes precision;\n'
-             'joint exposure keeps both.', 12, False, INK)
-    takeaway(s, 'The best v3 model beats v2 on mean accuracy and matches its precision — while remaining queryable and smaller.')
+    header(s, 'RESULTS', 'Trained on both datasets jointly (best model)')
+    scene_grid(s, [
+        ('results/panels/scene_input.png', 'Input, VKITTI2 Scene18'),
+        ('results/panels/scene_gt.png', 'Ground truth'),
+        ('results/panels/scene_v2.png', 'NeuFlow v2, EPE 2.11 px'),
+        ('results/panels/scene_v3_mixed.png', 'NeuFlow v3 (mixed), EPE 2.06 px'),
+    ])
+    add_text(s, 0.75, 6.35, 11.9, 0.75, 'Both datasets sampled together in every batch (34,958 pairs), evaluated on held-out VKITTI2: 2.18 px EPE, 6% better than v2,\n76.4% within 1 px (v2: 77.6) and 3 px accuracy at parity. Sequential finetuning had failed at 2.50 px; joint sampling keeps both strengths.', 11.5, False, INK)
     footer(s, i)
 
     # ============================================ 8b · Head-to-head
@@ -424,6 +407,17 @@ def main():
              'A model selector switches between v3 and the v2 baseline in place: with v2, every interaction requires the full dense map\n'
              'to have been computed; with v3, the same interactions are answered from the cached coarse state in ~1.6 ms. The difference\n'
              'between the two architectures is directly felt in the tool.', 11.5, False, INK)
+    footer(s, i)
+
+    # ============================================ 11c · YouTube run proof
+    s, i = slide()
+    header(s, 'INTERFACE', 'Live run on public video: motion detection with measurements')
+    s.shapes.add_picture('results/visuals/yt_run_viewer.png', Inches(0.75), Inches(1.7), width=Inches(6.3))
+    s.shapes.add_picture('results/visuals/yt_run_resources.png', Inches(7.35), Inches(1.7), width=Inches(5.3))
+    add_text(s, 0.75, 5.6, 11.8, 1.1,
+             'Forty consecutive frame pairs of a public YouTube highway video (640x360), processed live in the GUI: mean 29.8 FPS\n'
+             'end to end with motion boxes on the moving vehicles. The resource graphs were sampled during the same run; GPU memory\n'
+             'stays flat at 769 MB because one cached backbone state serves every interaction.', 11, False, INK)
     footer(s, i)
 
     # ============================================ 12 · Objectives

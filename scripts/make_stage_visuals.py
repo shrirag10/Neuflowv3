@@ -113,9 +113,12 @@ def main():
                 (flow_viz.flow_to_image(f3), f'NeuFlow v3 ({tag}) — EPE {epe(f3, gt, valid):.2f} px'),
             ]
             for row, (im, title) in enumerate(rows):
-                axes[row][col].imshow(im)
-                axes[row][col].set_title(title, fontsize=11, loc='left')
-                axes[row][col].axis('off')
+                ax = axes[row][col]
+                ax.imshow(im)
+                ax.set_title(title, fontsize=11, loc='left')
+                ax.set_xticks([]); ax.set_yticks([])
+                for sp in ax.spines.values():
+                    sp.set_visible(True); sp.set_color('#1a1a1a'); sp.set_linewidth(1.2)
         fig.suptitle(desc, fontsize=14, x=0.01, ha='left', fontweight='bold')
         plt.tight_layout(rect=[0, 0, 1, 0.97])
         path = f'{OUT}/stage_{tag}.png'

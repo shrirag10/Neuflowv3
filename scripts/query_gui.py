@@ -367,7 +367,9 @@ class QueryWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         tabs = QTabWidget()
         tabs.addTab(scroll, 'Viewer')
-        tabs.addTab(ResourcesPanel(self), 'System resources')
+        self.resources_panel = ResourcesPanel(self)
+        tabs.addTab(self.resources_panel, 'System resources')
+        self.tabs = tabs
         self.setCentralWidget(tabs)
         self.setStatusBar(QStatusBar())
         self._build_menu()

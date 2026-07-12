@@ -59,6 +59,9 @@ Visual comparisons: `results/visuals/compare_*.png` (GT vs v2 vs v3 + error maps
 `results/visuals/sparse_queries.png` (300 corner queries in one 1.6 ms call),
 `results/visuals/query_gui_selftest.png` (interactive GUI).
 
+In-domain check (FlyingChairs validation, 640 held-out pairs): v2 2.238 px EPE / 78.7% 1px;
+chairs-trained v3 2.399 px / 76.6%. The 1px gap is smaller in-domain than on VKITTI2.
+
 Key findings:
 
 1. **Zero-training operating point.** With no decoder training whatsoever, v3 delivers
