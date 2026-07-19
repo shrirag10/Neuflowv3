@@ -422,12 +422,12 @@ def main():
 
     # ============================================ 11d · v2 speedup study
     s, i = slide()
-    header(s, 'V2 OPTIMIZATION', 'Inside v2: what its 35 ms buys, and what can be dropped')
+    header(s, 'V3 ACCELERATION', 'Attacking the frozen front-end: v3 sparse from 30 to 42 FPS')
     s.shapes.add_picture('results/v2_speedup_study.png', Inches(0.75), Inches(1.75), width=Inches(11.85))
     add_text(s, 0.75, 5.85, 11.9, 1.2,
-             'The eight 1/8-scale refinement iterations consume 59% of the runtime; iterations 7-12 buy almost nothing (2.29 vs 2.27 px).\n'
-             'Best frozen-weights operating point: 2 iterations at 1/16 (0.5 ms each) + 4 at 1/8, giving +38% FPS for 0.13 px. Retraining AT\n'
-             'this schedule on HPC should recover most of that gap. Halving input resolution (144 FPS) costs 1.2 px untrained: retrain to use.', 11, False, INK)
+             'v3 inherits its 33 ms coarse pass from v2, and 62% of it is the eight 1/8-scale refinement iterations, which stop paying\n'
+             'for themselves after four. At the (2,4) schedule, v3 answers 800 queries in 23.9 ms (41.8 FPS), 52% faster than v2 full frame,\n'
+             'while staying ahead on accuracy (2.27 vs 2.29 px; the cut costs v3 only 0.04 px vs 0.13 for v2). HPC decoder retraining recovers more.', 11, False, INK)
     footer(s, i)
 
     # ============================================ 12 · Objectives
