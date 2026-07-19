@@ -128,6 +128,16 @@ def writeFlowKITTI(filename, uv):
     cv2.imwrite(filename, uv[..., ::-1])
 
 
+def read_flo5(filename):
+    """Spring .flo5: HDF5 flow at 2x image resolution (3840x2160 for 1080p frames).
+    Returns flow subsampled to image resolution with values halved to match
+    (official spring_utils convention for training at input resolution)."""
+    import h5py
+    with h5py.File(filename, 'r') as f:
+        flow = f['flow'][()]
+    return flow[::2, ::2].astype(np.float32) / 2.0
+
+
 def read_gen(file_name, pil=False):
     ext = splitext(file_name)[-1]
     if ext == '.png' or ext == '.jpeg' or ext == '.ppm' or ext == '.jpg':
@@ -136,6 +146,8 @@ def read_gen(file_name, pil=False):
         return np.load(file_name)
     elif ext == '.flo':
         return readFlow(file_name).astype(np.float32)
+    elif ext == '.flo5':
+        return read_flo5(file_name)
     elif ext == '.pfm':
         flow = readPFM(file_name).astype(np.float32)
         if len(flow.shape) == 2:

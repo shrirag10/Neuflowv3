@@ -151,16 +151,33 @@ class MpiSintel(FlowDataset):
             self.is_test = True
 
         for scene in os.listdir(image_root):
-            image_list = sorted(glob(osp.join(image_root, scene, '*.npy')))
+            image_list = sorted(glob(osp.join(image_root, scene, '*.npy'))) or \
+                         sorted(glob(osp.join(image_root, scene, '*.png')))
             for i in range(len(image_list) - 1):
                 self.image_list += [[image_list[i], image_list[i + 1]]]
                 self.extra_info += [(scene, i)]  # scene and frame_id
 
             if split != 'test':
-                self.flow_list += sorted(glob(osp.join(flow_root, scene, '*.npy')))
+                self.flow_list += sorted(glob(osp.join(flow_root, scene, '*.npy'))) or \
+                                  sorted(glob(osp.join(flow_root, scene, '*.flo')))
 
                 if load_occlusion:
                     self.occ_list += sorted(glob(osp.join(occlusion_root, scene, '*.png')))
+
+
+class Spring(FlowDataset):
+    """Spring (CVPR 2023): 1080p frames, GT flow stored at 2x resolution (.flo5).
+    read_flo5 subsamples GT to input resolution. Left camera, forward flow."""
+
+    def __init__(self, aug_params=None, root='datasets/spring/train'):
+        super(Spring, self).__init__(aug_params)
+        for seq in sorted(os.listdir(root)):
+            imgs = sorted(glob(osp.join(root, seq, 'frame_left', '*.png')))
+            flows = sorted(glob(osp.join(root, seq, 'flow_FW_left', '*.flo5')))
+            for i in range(len(flows)):
+                if i + 1 < len(imgs):
+                    self.image_list += [[imgs[i], imgs[i + 1]]]
+                    self.flow_list += [flows[i]]
 
 
 class FlyingChairs(FlowDataset):
@@ -433,6 +450,28 @@ def build_train_dataset(stage):
 
         train_dataset = 20 * sintel_clean + 20 * sintel_final + 200 * kitti + 5 * hd1k + things_clean
         print(len(sintel_clean), len(sintel_final), len(kitti), len(hd1k), len(things_clean))
+
+    elif stage == 'grand_mix':
+        # chairs + vkitti2(6 variants) + sintel clean/final — one step toward
+        # v2's training distribution (fair-comparison item in the audit)
+        aug_params = {'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}
+        chairs = FlyingChairs({'crop_size': (368, 496), 'min_scale': 0.1, 'max_scale': 1.0, 'do_flip': True}, split='training')
+        vk = VKITTI2(aug_params=aug_params, variants=['clone', 'fog', 'morning', 'overcast', 'rain', 'sunset'])
+        sc = MpiSintel(aug_params, split='training', dstype='clean')
+        sf = MpiSintel(aug_params, split='training', dstype='final')
+        train_dataset = chairs + vk + 5 * sc + 5 * sf
+        print(f'grand_mix: chairs={len(chairs)} vkitti2={len(vk)} sintel={len(sc)}+{len(sf)} (x5)')
+
+    elif stage == 'spring_mix':
+        aug_params = {'crop_size': (368, 768), 'min_scale': -0.4, 'max_scale': 0.4, 'do_flip': True}
+        spring = Spring(aug_params=aug_params)
+        chairs = FlyingChairs({'crop_size': (368, 496), 'min_scale': 0.1, 'max_scale': 1.0, 'do_flip': True}, split='training')
+        vk = VKITTI2(aug_params={'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True},
+                     variants=['clone', 'fog', 'morning', 'overcast', 'rain', 'sunset'])
+        sc = MpiSintel({'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='clean')
+        sf = MpiSintel({'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='final')
+        train_dataset = 2 * spring + chairs + vk + 5 * sc + 5 * sf
+        print(f'spring_mix: spring={len(spring)}(x2) chairs={len(chairs)} vkitti2={len(vk)} sintel={len(sc)}+{len(sf)}(x5)')
 
     elif stage == 'viper':
         crop_size = (368, 768)
