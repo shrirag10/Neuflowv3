@@ -44,7 +44,7 @@ def build_vkitti2_val_pairs(root, val_scenes=None):
 
 @torch.no_grad()
 def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=True, crop=None,
-             head='regress', pe=False):
+             head='regress', pe=False, iters_s16=1, iters_s8=8, fast_dense=False, stride=1):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     amp_enabled = device.type == 'cuda'
 
@@ -100,12 +100,16 @@ def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=T
             if device.type == 'cuda':
                 torch.cuda.synchronize()
             t0 = time.perf_counter()
-            results = model(img1, img2)
+            if fast_dense:
+                state = model.infer_coarse_state(img1, img2, iters_s16=iters_s16, iters_s8=iters_s8)
+                out = model.decode_dense_fast(state, stride=stride)
+            else:
+                out = model(img1, img2, iters_s16=iters_s16, iters_s8=iters_s8)[-1]
             if device.type == 'cuda':
                 torch.cuda.synchronize()
             fwd_times.append(time.perf_counter() - t0)
 
-        flow_pr = padder.unpad(results[-1][0]).float().cpu()
+        flow_pr = padder.unpad(out[0]).float().cpu()
 
         epe = torch.sum((flow_pr - flow_gt) ** 2, dim=0).sqrt()
         mag = torch.sum(flow_gt ** 2, dim=0).sqrt()
@@ -151,7 +155,13 @@ if __name__ == '__main__':
     parser.add_argument('--head', default='regress', choices=['regress', 'convex'],
                         help='Implicit decoder head type (must match checkpoint)')
     parser.add_argument('--pe', action='store_true', help='Checkpoint uses Fourier PE')
+    parser.add_argument('--iters_s16', type=int, default=1)
+    parser.add_argument('--iters_s8', type=int, default=8)
+    parser.add_argument('--fast_dense', action='store_true', help='Use decode_dense_fast path')
+    parser.add_argument('--stride', type=int, default=1, help='fast_dense decode stride')
     args = parser.parse_args()
 
     evaluate(args.checkpoint, args.dataset_root, args.val_scenes, args.padding_factor,
-             implicit=not args.no_implicit, crop=args.crop, head=args.head, pe=args.pe)
+             implicit=not args.no_implicit, crop=args.crop, head=args.head, pe=args.pe,
+             iters_s16=args.iters_s16, iters_s8=args.iters_s8,
+             fast_dense=args.fast_dense, stride=args.stride)
