@@ -174,8 +174,7 @@ def main(args):
         if (args.implicit and hasattr(model_without_ddp, 'implicit_decoder_module')
                 and not args.no_zero_init_decoder_head):
             dec = model_without_ddp.implicit_decoder_module
-            head = dec.convex_head if dec.head_mode == 'convex' else dec.flow_head
-            out_layer = head.layers[-1]
+            out_layer = dec.convex_head.layers[-1]
             torch.nn.init.zeros_(out_layer.weight)
             torch.nn.init.zeros_(out_layer.bias)
 

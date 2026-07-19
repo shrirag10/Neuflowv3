@@ -17,11 +17,18 @@ from huggingface_hub import PyTorchModelHubMixin
 class NeuFlow(torch.nn.Module,
               PyTorchModelHubMixin,
               repo_url="https://github.com/neufieldrobotics/NeuFlow_v2", license="apache-2.0", pipeline_tag="image-to-image"):
-    def __init__(self, use_implicit: bool = True, head_mode: str = 'regress', use_pe: bool = False):
+    def __init__(self, use_implicit: bool = True, head_mode: str = 'convex', use_pe: bool = False):
         super(NeuFlow, self).__init__()
 
+        # v3 rebuild: convex head only, no PE (docs/v3_rebuild_audit.md Part 2).
+        # Args kept for CLI compatibility; anything else is an error, not a fallback.
+        if use_implicit and head_mode != 'convex':
+            raise ValueError("v3 rebuild supports head_mode='convex' only "
+                             "(regress head never trained below init; see audit)")
+        if use_pe:
+            raise ValueError('Fourier PE removed after null ablation result (see audit)')
         self.use_implicit = use_implicit
-        self.head_mode = head_mode
+        self.head_mode = 'convex'
 
         self.backbone = backbone_v7.CNNEncoder(config.feature_dim_s16, config.context_dim_s16, config.feature_dim_s8, config.context_dim_s8)
         
@@ -57,8 +64,6 @@ class NeuFlow(torch.nn.Module,
                 hidden_dim=config.feature_dim_s16,
                 hidden_list=config.implicit_mlp_hidden_list,
                 window_size=config.implicit_window_size,
-                head_mode=head_mode,
-                use_pe=use_pe,
             )
         else:
             # ---- Legacy convex-upsampler path ----
@@ -184,43 +189,27 @@ class NeuFlow(torch.nn.Module,
                 adaptive_ratio=adaptive_ratio,
             )  # [B, adaptive_n, 2]
 
-        return self.implicit_decoder_module(
-            img=state['img0'],
-            feat_s8=state['feature0_s8'],
-            feat1_s8=state['feature1_s8'],
-            feat_s16=state['feature0_s16'],
-            ctx_s8=state['context0_s8'],
-            coarse_flow=state['coarse_flow_s8'],
-            query_coords=query_coords,
-            target_h=target_h,
-            target_w=target_w,
-        )
+        if '_maps' not in state:
+            state['_maps'] = self.implicit_decoder_module.precompute(
+                state['feature0_s8'], state['feature1_s8'],
+                state['feature0_s16'], state['context0_s8'])
+        if query_coords is not None:
+            return self.implicit_decoder_module.decode(
+                state['_maps'], state['coarse_flow_s8'], query_coords)
+        return self.implicit_decoder_module.decode_dense(
+            state['_maps'], state['coarse_flow_s8'], target_h, target_w, stride=1)
 
     def decode_dense_fast(self, state, target_h=None, target_w=None, fusion_on_grid=True,
                           stride=1):
-        """Fast dense decoding from cached state (see ImplicitFlowDecoder.forward_dense_fast).
-
-        stride > 1 decodes a subsampled grid and bilinearly upsamples the flow
-        field to the target size. Measured on VKITTI2: stride=2 changes EPE by
-        <0.001 px while cutting decode cost ~4x (flow is smooth at 2 px scale).
-        """
+        """Dense decode (v3 rebuild: single unified path; fusion_on_grid kept for CLI compat)."""
         if not self.use_implicit:
             raise RuntimeError('decode_dense_fast is only available in implicit mode.')
-        _, _, H8, W8 = state['feature0_s8'].shape
-        th = target_h or H8 * 8
-        tw = target_w or W8 * 8
-        flow = self.implicit_decoder_module.forward_dense_fast(
-            feat_s8=state['feature0_s8'],
-            feat1_s8=state['feature1_s8'],
-            feat_s16=state['feature0_s16'],
-            ctx_s8=state['context0_s8'],
-            coarse_flow=state['coarse_flow_s8'],
-            target_h=th // stride, target_w=tw // stride,
-            fusion_on_grid=fusion_on_grid,
-        )
-        if stride > 1:
-            flow = F.interpolate(flow, size=(th, tw), mode='bilinear', align_corners=False)
-        return flow
+        if '_maps' not in state:
+            state['_maps'] = self.implicit_decoder_module.precompute(
+                state['feature0_s8'], state['feature1_s8'],
+                state['feature0_s16'], state['context0_s8'])
+        return self.implicit_decoder_module.decode_dense(
+            state['_maps'], state['coarse_flow_s8'], target_h, target_w, stride=stride)
 
     def forward(self, img0, img1, iters_s16=1, iters_s8=8,
                 query_coords=None, target_h=None, target_w=None,

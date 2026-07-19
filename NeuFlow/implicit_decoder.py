@@ -1,28 +1,26 @@
-# Implicit flow decoder adapted from InfiniDepth (Yu et al., 2025).
-# InfiniDepth uses ViT features (256/512/1024d) for depth — here we use
-# NeuFlow's CNN backbone features (64/128/128d) for optical flow.
+# Queryable flow decoder — v3 rebuild (2026-07-19).
 #
-# Three feature scales:
-#   ctx_s8   (64d, 1/8)  — appearance context
-#   feat_s8  (128d, 1/8) — cross-frame matching
-#   feat_s16 (128d, 1/16) — global/semantic
+# Design contract: docs/v3_rebuild_audit.md Part 2. Every choice below is backed
+# by a measured result; rejected ideas (Fourier PE, unbounded regression head)
+# are documented there with their evidence.
 #
-# Hierarchical fusion (InfiniDepth Eq. 3, applied twice):
-#   h2 = FFN1(feat_s8  + σ(g1) * Linear(ctx_s8))
-#   h3 = FFN2(feat_s16 + σ(g2) * Linear(h2))
+# One compute path for everything:
+#   precompute(): window projections applied as 3x3 convs over the feature maps
+#     (mathematically identical to window-sample-then-Linear — both are linear),
+#     then gated fusion evaluated ONCE on the 1/8 grid.
+#     Known approximation: sampling fused-features instead of fusing sampled
+#     features costs +0.02 px EPE (measured, VKITTI2).
+#   decode(): per query — one point sample of the fused map, one of the warped
+#     frame-1 map, 3x3 coarse-flow candidates, softmax convex combination.
 #
-# Local-window sampling (3x3 by default):
-#   Each query point samples a k×k neighborhood in feature-map pixel space.
-#   Offsets are per-feature-pixel (2/Hf per step), NOT per full-res pixel.
-#   At s8 stride: 3×3 window = ±8 full-res pixels of spatial context.
-#   win_proj_* collapses [k*k*C → C], so downstream dims are unchanged.
-#   center-init on win_proj_* means behavior is identical to point-sampling
-#   at step 0 — gradient descent expands the effective receptive field.
+# Head: convex weights over the 3x3 coarse-flow neighborhood + a bilinear
+# candidate, biased so a zero-initialized head reproduces bilinear upsampling
+# exactly (the 2.476 px operating point; full-set verified).
 #
-# MLP input: [h3 | feat1_warped | (x,y)_norm | u_coarse_norm] = 260d
-# Output: delta_flow, added to bilinear-upsampled coarse flow.
-# Zeroing the output layer starts from the bilinear coarse-flow base, not from
-# the legacy v2 convex upsampler.
+# Parameter names match the pre-rebuild decoder, so existing convex-head
+# checkpoints (e.g. neuflowv3_mix) load without key surgery. Their weights were
+# trained on the exact per-query fusion path; retraining on this unified path
+# is PENDING — until then, loaded checkpoints run with the +0.02 px approximation.
 
 import torch
 import torch.nn as nn
@@ -49,405 +47,189 @@ class ImplicitFlowDecoder(nn.Module):
 
     def __init__(
         self,
-        feat_dim_s8: int = 128,   # feat_s8 / feat_s16 channel dim (same in NeuFlow)
-        feat_dim_ctx: int = 64,   # context_s8 channel dim
-        hidden_dim: int = 128,    # hidden dim throughout fusion
+        feat_dim_s8: int = 128,
+        feat_dim_ctx: int = 64,
+        hidden_dim: int = 128,
         hidden_list: list = None,
-        window_size: int = 3,     # local-window size (must be odd)
-        head_mode: str = 'regress',  # 'regress' (delta flow) | 'convex' (AnyFlow-style weights)
-        use_pe: bool = False,     # Fourier-encode the sub-cell offset (AnyFlow psi(x_q - v*))
-        pe_freqs: int = 4,
+        window_size: int = 3,
     ):
         super().__init__()
 
         if window_size % 2 != 1:
             raise ValueError(f'window_size must be odd, got {window_size}')
-        if head_mode not in ('regress', 'convex'):
-            raise ValueError(f'head_mode must be regress|convex, got {head_mode}')
-
         if hidden_list is None:
             hidden_list = [256, 128, 64]
 
-        self.feat_dim_s8  = feat_dim_s8
+        self.feat_dim_s8 = feat_dim_s8
         self.feat_dim_ctx = feat_dim_ctx
-        self.window_size  = window_size
-        self.head_mode    = head_mode
-        self.use_pe       = use_pe
-        self.pe_freqs     = pe_freqs
+        self.window_size = window_size
 
-        # --- Local-window projectors: k*k*C → C ---
-        # Do NOT call center-init here; NeuFlow.__init__ runs Xavier over all
-        # parameters after constructing this module, which would overwrite it.
-        # reset_window_projections_to_center() is called there after the Xavier pass.
         k2 = window_size ** 2
-        self.win_proj_ctx   = nn.Linear(k2 * feat_dim_ctx, feat_dim_ctx)   # 576→64
-        self.win_proj_s8    = nn.Linear(k2 * feat_dim_s8,  feat_dim_s8)    # 1152→128
-        self.win_proj_s16   = nn.Linear(k2 * feat_dim_s8,  feat_dim_s8)    # 1152→128
-        self.win_proj_feat1 = nn.Linear(k2 * feat_dim_s8,  feat_dim_s8)    # 1152→128
+        # window projections (stored as Linear for checkpoint compatibility;
+        # applied as convs via _win_conv)
+        self.win_proj_ctx = nn.Linear(k2 * feat_dim_ctx, feat_dim_ctx)
+        self.win_proj_s8 = nn.Linear(k2 * feat_dim_s8, feat_dim_s8)
+        self.win_proj_s16 = nn.Linear(k2 * feat_dim_s8, feat_dim_s8)
+        self.win_proj_feat1 = nn.Linear(k2 * feat_dim_s8, feat_dim_s8)
 
-        # --- Fusion: ctx_s8 -> feat_s8 -> feat_s16 (shallow to deep) ---
+        # gated hierarchical fusion (InfiniDepth Eq. 3 applied twice)
         self.proj_ctx = nn.Linear(feat_dim_ctx, hidden_dim)
-        self.gate1    = nn.Parameter(torch.ones(hidden_dim))
-        self.ffn1     = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 2),
-            nn.GELU(),
+        self.gate1 = nn.Parameter(torch.ones(hidden_dim))
+        self.ffn1 = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 2), nn.GELU(),
             nn.Linear(hidden_dim * 2, hidden_dim),
         )
-
         self.proj_s8 = nn.Linear(feat_dim_s8, hidden_dim)
-        self.gate2   = nn.Parameter(torch.ones(hidden_dim))
-        self.ffn2    = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim * 2),
-            nn.GELU(),
+        self.gate2 = nn.Parameter(torch.ones(hidden_dim))
+        self.ffn2 = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim * 2), nn.GELU(),
             nn.Linear(hidden_dim * 2, hidden_dim),
         )
 
-        # PE adds sin/cos at pe_freqs frequencies for the (x,y) sub-cell offset
-        pe_dim = 2 * 2 * pe_freqs if use_pe else 0
-        mlp_in_dim = hidden_dim + feat_dim_s8 + 2 + 2 + pe_dim   # 260 (+16 with PE)
-
-        if head_mode == 'convex':
-            # AnyFlow-style: predict softmax weights over the k*k coarse-flow
-            # neighborhood plus the bilinear point sample as candidate k*k+1.
-            # BILINEAR_PRIOR biases the softmax toward the bilinear candidate so a
-            # zero-init head starts as (near-exact) bilinear upsampling — the
-            # 2.48-EPE operating point — instead of an arbitrary blend.
-            k2 = window_size ** 2
-            self.convex_head = MLP(
-                in_dim=mlp_in_dim,
-                out_dim=k2 + 1,
-                hidden_list=hidden_list,
-            )
-            prior = torch.zeros(k2 + 1)
-            prior[k2] = 9.0   # softmax bilinear weight ~0.9989 at zero-init (9 window slots share ~0.0011)
-            self.register_buffer('convex_prior', prior)
-        else:
-            # MLP: cat([h3 | feat1_warped | coords_norm | coarse_norm]) → delta
-            self.flow_head = MLP(
-                in_dim=mlp_in_dim,
-                out_dim=2,
-                hidden_list=hidden_list,
-            )
+        # convex head: k2 window candidates + 1 bilinear candidate
+        self.convex_head = MLP(
+            in_dim=hidden_dim + feat_dim_s8 + 2 + 2,   # fused | f1_warped | xy | coarse
+            out_dim=k2 + 1,
+            hidden_list=hidden_list,
+        )
+        prior = torch.zeros(k2 + 1)
+        prior[k2] = 6.0   # zero-init head => ~0.9975 weight on the bilinear candidate
+        self.register_buffer('convex_prior', prior)
 
     def reset_window_projections_to_center(self):
-        """Set win_proj_* to identity on the center cell, zero elsewhere.
-
-        After this call, _sample_local_window produces the same output as
-        _sample_features (single-point bilinear), so warm-starting from a
-        pre-window checkpoint causes zero regression at step 0.
-
-        Must be called AFTER NeuFlow's global Xavier init, not inside __init__.
-        """
+        """Identity on the center cell, zero elsewhere: window projection output
+        equals a single point sample at initialization. Call AFTER any global init."""
         k2 = self.window_size ** 2
-        center = k2 // 2  # index 4 for 3×3
-
+        center = k2 // 2
         for proj, C in [
-            (self.win_proj_ctx,   self.feat_dim_ctx),
-            (self.win_proj_s8,    self.feat_dim_s8),
-            (self.win_proj_s16,   self.feat_dim_s8),
+            (self.win_proj_ctx, self.feat_dim_ctx),
+            (self.win_proj_s8, self.feat_dim_s8),
+            (self.win_proj_s16, self.feat_dim_s8),
             (self.win_proj_feat1, self.feat_dim_s8),
         ]:
             with torch.no_grad():
                 proj.weight.zero_()
-                # Only the center cell's block contributes — equivalent to single-point sampling
-                proj.weight[:, center * C : (center + 1) * C] = torch.eye(C)
+                proj.weight[:, center * C:(center + 1) * C] = torch.eye(C)
                 if proj.bias is not None:
                     proj.bias.zero_()
 
-    @staticmethod
-    def _sample_features(feat_map: torch.Tensor, coords_norm: torch.Tensor) -> torch.Tensor:
-        """Bilinear sample feat_map at normalized coords (x,y) in [-1,1]."""
-        grid = coords_norm.to(feat_map.dtype).unsqueeze(1)  # [B, 1, N, 2]
-        sampled = F.grid_sample(
-            feat_map, grid,
-            mode='bilinear', padding_mode='border', align_corners=False
-        )  # [B, C, 1, N]
-        return sampled.squeeze(2).permute(0, 2, 1)  # [B, N, C]
+    # ---- primitives -------------------------------------------------------
 
-    @staticmethod
-    def _sample_local_window(
-        feat_map: torch.Tensor,
-        coords_norm: torch.Tensor,
-        window_size: int,
-        out_proj: nn.Linear,
-    ) -> torch.Tensor:
-        """Sample a k×k local window around each query point, project to C.
-
-        Offsets are in feature-map pixel space: step = 2/Hf (y) and 2/Wf (x).
-        At s8 stride a 1-feature-pixel step = 8 full-res pixels.
-        At s16 stride a 1-feature-pixel step = 16 full-res pixels.
-
-        Args:
-            feat_map:   [B, C, Hf, Wf]
-            coords_norm:[B, N, 2]  normalized (x,y) in [-1,1]
-            window_size: k (must be odd)
-            out_proj:   nn.Linear(k*k*C → C)
-        Returns:
-            [B, N, C]
-        """
-        B, C, Hf, Wf = feat_map.shape
-        N = coords_norm.shape[1]
-        r = window_size // 2
-        device = feat_map.device
-
-        # Per-feature-pixel offsets in normalized coord space
-        oy = torch.arange(-r, r + 1, device=device).float() * (2.0 / Hf)
-        ox = torch.arange(-r, r + 1, device=device).float() * (2.0 / Wf)
-        grid_oy, grid_ox = torch.meshgrid(oy, ox, indexing='ij')
-        offsets = torch.stack([grid_ox.flatten(), grid_oy.flatten()], dim=-1)  # [k*k, 2]
-        k2 = offsets.shape[0]
-
-        # [B, N, 1, 2] + [1, 1, k*k, 2] → [B, N, k*k, 2]
-        win_coords = coords_norm.float().unsqueeze(2) + offsets[None, None]
-        win_coords = win_coords.clamp(-1 + 1e-6, 1 - 1e-6)
-
-        # Single grid_sample call over all N*k*k positions
-        flat = win_coords.reshape(B, 1, N * k2, 2).to(feat_map.dtype)
-        sampled = F.grid_sample(
-            feat_map, flat,
-            mode='bilinear', padding_mode='border', align_corners=False
-        )  # [B, C, 1, N*k*k]
-
-        # [B, C, 1, N*k*k] → [B, N, k*k*C]
-        sampled = sampled.squeeze(2).permute(0, 2, 1).reshape(B, N, k2 * C)
-
-        return out_proj(sampled.to(out_proj.weight.dtype))  # [B, N, C]
-
-    @staticmethod
-    def _sample_window_raw(
-        feat_map: torch.Tensor,
-        coords_norm: torch.Tensor,
-        window_size: int,
-    ) -> torch.Tensor:
-        """Sample a k×k local window around each query point, no projection.
-
-        Same geometry as _sample_local_window but returns the raw values:
-            [B, N, k*k, C]
-        """
-        B, C, Hf, Wf = feat_map.shape
-        N = coords_norm.shape[1]
-        r = window_size // 2
-        device = feat_map.device
-
-        oy = torch.arange(-r, r + 1, device=device).float() * (2.0 / Hf)
-        ox = torch.arange(-r, r + 1, device=device).float() * (2.0 / Wf)
-        grid_oy, grid_ox = torch.meshgrid(oy, ox, indexing='ij')
-        offsets = torch.stack([grid_ox.flatten(), grid_oy.flatten()], dim=-1)  # [k*k, 2]
-        k2 = offsets.shape[0]
-
-        win_coords = coords_norm.float().unsqueeze(2) + offsets[None, None]
-        win_coords = win_coords.clamp(-1 + 1e-6, 1 - 1e-6)
-
-        flat = win_coords.reshape(B, 1, N * k2, 2).to(feat_map.dtype)
-        sampled = F.grid_sample(
-            feat_map, flat,
-            mode='bilinear', padding_mode='border', align_corners=False
-        )  # [B, C, 1, N*k*k]
-
-        return sampled.squeeze(2).permute(0, 2, 1).reshape(B, N, k2, C)
-
-    def _win_proj_as_conv(self, feat_map, proj):
-        """Exact reformulation: window-sample-then-Linear == Conv2d-then-point-sample.
-
-        Both are linear, so Linear(concat_k F(p+k)) == (W * F)(p) where W is the
-        Linear weight laid out as a 3x3 kernel. Precomputing the conv once per
-        image removes the k*k sampling and the k*k*C matmul from the per-query path.
-        """
+    def _win_conv(self, feat_map, proj):
+        """Window projection as a conv (exact: both forms are linear in the map)."""
         B, C, Hf, Wf = feat_map.shape
         k = self.window_size
-        w = proj.weight.view(-1, k, k, C).permute(0, 3, 1, 2).to(feat_map.dtype)  # [Co, C, ky, kx]
-        x = F.pad(feat_map, (k // 2,) * 4, mode='replicate')  # matches border padding_mode
+        w = proj.weight.view(-1, k, k, C).permute(0, 3, 1, 2).to(feat_map.dtype)
+        x = F.pad(feat_map, (k // 2,) * 4, mode='replicate')
         return F.conv2d(x, w, bias=proj.bias.to(feat_map.dtype))
 
-    def forward_dense_fast(self, feat_s8, feat1_s8, feat_s16, ctx_s8, coarse_flow,
-                           target_h=None, target_w=None, fusion_on_grid=True):
-        """Dense decoding with per-image precomputation.
+    @staticmethod
+    def _sample(feat_map, coords_norm):
+        """Bilinear point sample at normalized (x, y) in [-1, 1] -> [B, N, C]."""
+        grid = coords_norm.to(feat_map.dtype).unsqueeze(1)
+        out = F.grid_sample(feat_map, grid, mode='bilinear',
+                            padding_mode='border', align_corners=False)
+        return out.squeeze(2).permute(0, 2, 1)
 
-        fusion_on_grid=False: numerically equivalent to forward() dense mode
-        (window projections folded into convs; fusion + head still per pixel).
-        fusion_on_grid=True: additionally evaluates the gated fusion once on the
-        1/8 grid and bilinearly samples the fused features per pixel
-        (approximation: fusion is nonlinear, features are smooth).
-        """
-        B, _, H8, W8 = feat_s8.shape
+    def _sample_window_raw(self, feat_map, coords_norm):
+        """Raw k x k neighborhood values around each query -> [B, N, k*k, C]."""
+        B, C, Hf, Wf = feat_map.shape
+        N = coords_norm.shape[1]
+        r = self.window_size // 2
+        device = feat_map.device
+        oy = torch.arange(-r, r + 1, device=device).float() * (2.0 / Hf)
+        ox = torch.arange(-r, r + 1, device=device).float() * (2.0 / Wf)
+        gy, gx = torch.meshgrid(oy, ox, indexing='ij')
+        offsets = torch.stack([gx.flatten(), gy.flatten()], dim=-1)
+        k2 = offsets.shape[0]
+        win = (coords_norm.float().unsqueeze(2) + offsets[None, None]).clamp(-1 + 1e-6, 1 - 1e-6)
+        flat = win.reshape(B, 1, N * k2, 2).to(feat_map.dtype)
+        out = F.grid_sample(feat_map, flat, mode='bilinear',
+                            padding_mode='border', align_corners=False)
+        return out.squeeze(2).permute(0, 2, 1).reshape(B, N, k2, C)
+
+    def _fuse(self, f16, f8, fctx):
+        h2 = self.ffn1(f8 + torch.sigmoid(self.gate1) * self.proj_ctx(fctx))
+        h3 = f16 + torch.sigmoid(self.gate2) * self.proj_s8(h2)
+        return self.ffn2(h3)
+
+    # ---- two-phase API -----------------------------------------------------
+
+    def precompute(self, feat_s8, feat1_s8, feat_s16, ctx_s8):
+        """Once per image pair: conv-form projections + fusion on the 1/8 grid."""
+        m8 = self._win_conv(feat_s8, self.win_proj_s8)
+        mctx = self._win_conv(ctx_s8, self.win_proj_ctx)
+        m16 = self._win_conv(feat_s16, self.win_proj_s16)
+        m16 = F.interpolate(m16, size=m8.shape[-2:], mode='bilinear', align_corners=False)
+        fused = self._fuse(m16.permute(0, 2, 3, 1), m8.permute(0, 2, 3, 1),
+                           mctx.permute(0, 2, 3, 1)).permute(0, 3, 1, 2)
+        mf1 = self._win_conv(feat1_s8, self.win_proj_feat1)
+        return {'fused': fused, 'mf1': mf1}
+
+    def decode(self, maps, coarse_flow, query_coords):
+        """Flow at continuous pixel coords [B, N, 2] -> [B, N, 2]."""
+        B, _, H8, W8 = coarse_flow.shape
         H_full, W_full = H8 * 8, W8 * 8
-        target_h = target_h or H_full
-        target_w = target_w or W_full
-        dev = feat_s8.device
 
-        # per-image precompute: window projections as convs (exact)
-        m8 = self._win_proj_as_conv(feat_s8, self.win_proj_s8)
-        m16 = self._win_proj_as_conv(feat_s16, self.win_proj_s16)
-        mctx = self._win_proj_as_conv(ctx_s8, self.win_proj_ctx)
-        mf1 = self._win_proj_as_conv(feat1_s8, self.win_proj_feat1)
-
-        if fusion_on_grid:
-            # fuse once on the 1/8 grid; f16 map brought to s8 resolution first
-            m16_s8 = F.interpolate(m16, size=(H8, W8), mode='bilinear', align_corners=False)
-            fused_map = self._fuse_features(
-                m16_s8.permute(0, 2, 3, 1), m8.permute(0, 2, 3, 1), mctx.permute(0, 2, 3, 1)
-            ).permute(0, 3, 1, 2)  # [B, hidden, H8, W8]
-
-        ys = torch.arange(target_h, dtype=torch.float32, device=dev)
-        xs = torch.arange(target_w, dtype=torch.float32, device=dev)
-        if target_h != H_full or target_w != W_full:
-            ys = (ys + 0.5) * (H_full / target_h) - 0.5
-            xs = (xs + 0.5) * (W_full / target_w) - 0.5
-        gy, gx = torch.meshgrid(ys, xs, indexing='ij')
-        coords = torch.stack([gx, gy], -1).reshape(1, -1, 2).expand(B, -1, -1)
-
-        cn = coords.clone().float()
+        cn = query_coords.clone().float()
         cn[..., 0] = 2.0 * (cn[..., 0] + 0.5) / W_full - 1.0
         cn[..., 1] = 2.0 * (cn[..., 1] + 0.5) / H_full - 1.0
         cn.clamp_(-1 + 1e-6, 1 - 1e-6)
 
-        coarse_at_q = self._sample_features(coarse_flow, cn)
+        coarse_at_q = self._sample(coarse_flow, cn)
         coarse_at_q[..., 0] = coarse_at_q[..., 0] * (W_full / W8)
         coarse_at_q[..., 1] = coarse_at_q[..., 1] * (H_full / H8)
 
-        warp_x = cn[..., 0] + 2.0 * coarse_at_q[..., 0] / W_full
-        warp_y = cn[..., 1] + 2.0 * coarse_at_q[..., 1] / H_full
-        wc = torch.stack([warp_x, warp_y], -1).clamp(-1 + 1e-6, 1 - 1e-6)
-        f1w = self._sample_features(mf1, wc)
+        warp = torch.stack([
+            cn[..., 0] + 2.0 * coarse_at_q[..., 0] / W_full,
+            cn[..., 1] + 2.0 * coarse_at_q[..., 1] / H_full,
+        ], dim=-1).clamp(-1 + 1e-6, 1 - 1e-6)
 
-        if fusion_on_grid:
-            fused = self._sample_features(fused_map, cn)
-        else:
-            fused = self._fuse_features(self._sample_features(m16, cn),
-                                        self._sample_features(m8, cn),
-                                        self._sample_features(mctx, cn))
+        fused = self._sample(maps['fused'], cn)
+        f1w = self._sample(maps['mf1'], warp)
 
         coarse_norm = coarse_at_q.clone().float()
         coarse_norm[..., 0] /= W_full
         coarse_norm[..., 1] /= H_full
 
-        mlp_parts = [fused, f1w, cn, coarse_norm]
-        if self.use_pe:
-            p = (coords.float() + 0.5) / 8.0 - 0.5
-            c = p - p.floor() - 0.5
-            freqs = 2.0 ** torch.arange(self.pe_freqs, device=c.device, dtype=c.dtype)
-            ang = 2.0 * torch.pi * c.unsqueeze(-1) * freqs
-            mlp_parts.append(torch.cat([ang.sin(), ang.cos()], -1).flatten(-2).to(fused.dtype))
-        mlp_in = torch.cat(mlp_parts, dim=-1)
+        mlp_in = torch.cat([fused, f1w, cn, coarse_norm], dim=-1)
 
-        if self.head_mode == 'convex':
-            win_flow = self._sample_window_raw(coarse_flow, cn, self.window_size).float()
-            win_flow[..., 0] = win_flow[..., 0] * (W_full / W8)
-            win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
-            candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)
-            logits = self.convex_head(mlp_in).float() + self.convex_prior
-            weights = torch.softmax(logits, dim=-1)
-            flow = (weights.unsqueeze(-1) * candidates).sum(dim=2)
-        else:
-            delta = self.flow_head(mlp_in).clone().float()
-            delta[..., 0] = delta[..., 0] * W_full
-            delta[..., 1] = delta[..., 1] * H_full
-            flow = coarse_at_q + delta
+        win_flow = self._sample_window_raw(coarse_flow, cn).float()
+        win_flow[..., 0] = win_flow[..., 0] * (W_full / W8)
+        win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
+        candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)
 
-        return flow.reshape(B, target_h, target_w, 2).permute(0, 3, 1, 2)
+        logits = self.convex_head(mlp_in).float() + self.convex_prior
+        weights = torch.softmax(logits, dim=-1)
+        return (weights.unsqueeze(-1) * candidates).sum(dim=2)
 
-    def _fuse_features(self, feat_s16, feat_s8, ctx_s8):
-        # InfiniDepth Eq. 3 — two gated residual fusion steps
-        h2 = self.ffn1(feat_s8 + torch.sigmoid(self.gate1) * self.proj_ctx(ctx_s8))
-        h3 = feat_s16 + torch.sigmoid(self.gate2) * self.proj_s8(h2)
-        return self.ffn2(h3)
+    def decode_dense(self, maps, coarse_flow, target_h=None, target_w=None, stride=2):
+        """Dense grid decode. stride=2 + bilinear upsample measured at no EPE cost."""
+        B, _, H8, W8 = coarse_flow.shape
+        H_full, W_full = H8 * 8, W8 * 8
+        th, tw = target_h or H_full, target_w or W_full
+        dh, dw = th // stride, tw // stride
+        dev = coarse_flow.device
+
+        ys = torch.arange(dh, dtype=torch.float32, device=dev)
+        xs = torch.arange(dw, dtype=torch.float32, device=dev)
+        if dh != H_full or dw != W_full:
+            ys = (ys + 0.5) * (H_full / dh) - 0.5
+            xs = (xs + 0.5) * (W_full / dw) - 0.5
+        gy, gx = torch.meshgrid(ys, xs, indexing='ij')
+        coords = torch.stack([gx, gy], -1).reshape(1, -1, 2).expand(B, -1, -1)
+
+        flow = self.decode(maps, coarse_flow, coords)
+        flow = flow.reshape(B, dh, dw, 2).permute(0, 3, 1, 2)
+        if (dh, dw) != (th, tw):
+            flow = F.interpolate(flow, size=(th, tw), mode='bilinear', align_corners=False)
+        return flow
+
+    # ---- training/compat entry point --------------------------------------
 
     def forward(self, img, feat_s8, feat1_s8, feat_s16, ctx_s8, coarse_flow,
-                query_coords=None, target_h=None, target_w=None,
-                zero_residual: bool = False):
-        # Infer full-res spatial dims from feat_s8 stride (×8)
-        B = feat_s8.shape[0]
-        _, _, H8, W8 = feat_s8.shape
-        H_full = H8 * 8
-        W_full = W8 * 8
-
-        if target_h is None:
-            target_h = H_full
-        if target_w is None:
-            target_w = W_full
-
-        dense_query = query_coords is None
-        if dense_query:
-            ys = torch.arange(target_h, dtype=torch.float32, device=img.device)
-            xs = torch.arange(target_w, dtype=torch.float32, device=img.device)
-            if target_h != H_full or target_w != W_full:
-                # Center-based rescaling for align_corners=False semantics
-                ys = (ys + 0.5) * (H_full / target_h) - 0.5
-                xs = (xs + 0.5) * (W_full / target_w) - 0.5
-            grid_y, grid_x = torch.meshgrid(ys, xs, indexing='ij')
-            query_coords = torch.stack([grid_x, grid_y], dim=-1)
-            query_coords = query_coords.reshape(1, -1, 2).expand(B, -1, -1)  # [B, H*W, 2]
-
-        # Normalize to [-1, 1] (align_corners=False convention)
-        coords_norm = query_coords.clone().float()
-        coords_norm[..., 0] = 2.0 * (coords_norm[..., 0] + 0.5) / W_full - 1.0
-        coords_norm[..., 1] = 2.0 * (coords_norm[..., 1] + 0.5) / H_full - 1.0
-        coords_norm.clamp_(-1 + 1e-6, 1 - 1e-6)
-
-        # Local-window sample all four feature sources
-        ws = self.window_size
-        f16      = self._sample_local_window(feat_s16, coords_norm, ws, self.win_proj_s16)
-        f8       = self._sample_local_window(feat_s8,  coords_norm, ws, self.win_proj_s8)
-        fctx     = self._sample_local_window(ctx_s8,   coords_norm, ws, self.win_proj_ctx)
-
-        fused = self._fuse_features(f16, f8, fctx)
-
-        # Coarse flow at query points — single-point sample is correct here
-        coarse_at_q = self._sample_features(coarse_flow, coords_norm)
-        coarse_at_q[..., 0] = coarse_at_q[..., 0] * (W_full / W8)
-        coarse_at_q[..., 1] = coarse_at_q[..., 1] * (H_full / H8)
-
-        # Warped img1 features: local window at the warped correspondence
-        warp_x = coords_norm[..., 0] + 2.0 * coarse_at_q[..., 0] / W_full
-        warp_y = coords_norm[..., 1] + 2.0 * coarse_at_q[..., 1] / H_full
-        warped_coords = torch.stack([warp_x, warp_y], dim=-1).clamp(-1 + 1e-6, 1 - 1e-6)
-        f1_warped = self._sample_local_window(feat1_s8, warped_coords, ws, self.win_proj_feat1)
-
-        coarse_norm = coarse_at_q.clone().float()
-        coarse_norm[..., 0] /= W_full
-        coarse_norm[..., 1] /= H_full
-
-        mlp_parts = [fused, f1_warped, coords_norm, coarse_norm]
-
-        if self.use_pe:
-            # Sub-cell offset: where the query sits inside its s8 coarse cell,
-            # centered in [-0.5, 0.5). This is the sub-pixel signal the head
-            # cannot recover from coords_norm alone (AnyFlow's psi(x_q - v*)).
-            p = (query_coords.float() + 0.5) / 8.0 - 0.5   # s8 grid position
-            c = p - p.floor() - 0.5                         # [B, N, 2]
-            freqs = 2.0 ** torch.arange(self.pe_freqs, device=c.device, dtype=c.dtype)
-            ang = 2.0 * torch.pi * c.unsqueeze(-1) * freqs  # [B, N, 2, F]
-            pe = torch.cat([ang.sin(), ang.cos()], dim=-1).flatten(-2)  # [B, N, 4F]
-            mlp_parts.append(pe.to(fused.dtype))
-
-        mlp_in = torch.cat(mlp_parts, dim=-1)
-
-        if self.head_mode == 'convex':
-            # Candidates: k*k coarse-flow window values + the bilinear point sample.
-            win_flow = self._sample_window_raw(coarse_flow, coords_norm, self.window_size)
-            win_flow = win_flow.float()
-            win_flow[..., 0] = win_flow[..., 0] * (W_full / W8)
-            win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
-            candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)  # [B,N,k2+1,2]
-
-            logits = self.convex_head(mlp_in).float() + self.convex_prior
-            if zero_residual:
-                logits = torch.zeros_like(logits) + self.convex_prior
-            weights = torch.softmax(logits, dim=-1)  # [B, N, k2+1]
-
-            flow = (weights.unsqueeze(-1) * candidates).sum(dim=2)  # [B, N, 2]
-        else:
-            delta_norm = self.flow_head(mlp_in)
-            if zero_residual:
-                delta_norm = torch.zeros_like(delta_norm)
-
-            delta_flow = delta_norm.clone().float()
-            delta_flow[..., 0] = delta_norm[..., 0] * W_full
-            delta_flow[..., 1] = delta_norm[..., 1] * H_full
-
-            flow = coarse_at_q + delta_flow
-
-        if dense_query:
-            flow = flow.reshape(B, target_h, target_w, 2).permute(0, 3, 1, 2)
-
-        return flow
+                query_coords=None, target_h=None, target_w=None):
+        maps = self.precompute(feat_s8, feat1_s8, feat_s16, ctx_s8)
+        if query_coords is not None:
+            return self.decode(maps, coarse_flow, query_coords)
+        return self.decode_dense(maps, coarse_flow, target_h, target_w, stride=1)
