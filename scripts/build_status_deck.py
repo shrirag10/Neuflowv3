@@ -425,9 +425,10 @@ def main():
     header(s, 'V3 ACCELERATION', 'Attacking the frozen front-end: v3 sparse from 30 to 42 FPS')
     s.shapes.add_picture('results/v2_speedup_study.png', Inches(0.75), Inches(1.75), width=Inches(11.85))
     add_text(s, 0.75, 5.85, 11.9, 1.2,
-             'v3 inherits its 33 ms coarse pass from v2, and 62% of it is the eight 1/8-scale refinement iterations, which stop paying\n'
-             'for themselves after four. At the (2,4) schedule, v3 answers 800 queries in 23.9 ms (41.8 FPS), 52% faster than v2 full frame,\n'
-             'while staying ahead on accuracy (2.27 vs 2.29 px; the cut costs v3 only 0.04 px vs 0.13 for v2). HPC decoder retraining recovers more.', 11, False, INK)
+             'v3 inherits its 33 ms coarse pass from v2; 62% of it is refinement iterations that stop paying after four. At (2,4), sparse\n'
+             'mode runs 41.8 FPS (52% faster than v2 full frame) at better accuracy. Dense mode was rebuilt: window projections folded into\n'
+             'per-image convs (exact), fusion on the 1/8 grid, stride-2 decode. Full-frame v3: 29.9 ms vs v2 36.4 ms at equal EPE (2.284 vs\n'
+             '2.288), or 39.6 ms at clearly better EPE (2.245). v3 now beats v2 on its own dense workload. Gap left: 1px acc (75.7 vs 77.4).', 11, False, INK)
     footer(s, i)
 
     # ============================================ 12 · Objectives
