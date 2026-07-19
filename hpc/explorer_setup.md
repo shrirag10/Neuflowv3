@@ -12,8 +12,8 @@ cd $HOME
 git clone https://github.com/shrirag10/Neuflowv3.git NeuFlow_v3
 cd NeuFlow_v3 && git checkout v3-rebuild
 
-# 2) environment (Explorer uses modules + conda)
-module load anaconda3/2024.06 cuda/12.1
+# 2) environment — or just run: bash hpc/bootstrap.sh
+# (bootstrap.sh auto-detects the conda module; cuda module not needed for pip wheels)
 conda create -y -n neuflow python=3.10
 source activate neuflow
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121

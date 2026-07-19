@@ -1,13 +1,13 @@
 #!/bin/bash
 #SBATCH --job-name=nf3-rebuild-big
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:v100-sxm2:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
 #SBATCH --time=08:00:00
 #SBATCH --output=%x_%j.log
 
-module load anaconda3/2024.06 cuda/12.1
+module load $(module -t avail 2>&1 | grep -iE "^(anaconda|miniconda)" | sort -V | tail -1)
 source activate neuflow
 cd $HOME/NeuFlow_v3
 
