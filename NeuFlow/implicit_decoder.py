@@ -246,6 +246,106 @@ class ImplicitFlowDecoder(nn.Module):
 
         return sampled.squeeze(2).permute(0, 2, 1).reshape(B, N, k2, C)
 
+    def _win_proj_as_conv(self, feat_map, proj):
+        """Exact reformulation: window-sample-then-Linear == Conv2d-then-point-sample.
+
+        Both are linear, so Linear(concat_k F(p+k)) == (W * F)(p) where W is the
+        Linear weight laid out as a 3x3 kernel. Precomputing the conv once per
+        image removes the k*k sampling and the k*k*C matmul from the per-query path.
+        """
+        B, C, Hf, Wf = feat_map.shape
+        k = self.window_size
+        w = proj.weight.view(-1, k, k, C).permute(0, 3, 1, 2).to(feat_map.dtype)  # [Co, C, ky, kx]
+        x = F.pad(feat_map, (k // 2,) * 4, mode='replicate')  # matches border padding_mode
+        return F.conv2d(x, w, bias=proj.bias.to(feat_map.dtype))
+
+    def forward_dense_fast(self, feat_s8, feat1_s8, feat_s16, ctx_s8, coarse_flow,
+                           target_h=None, target_w=None, fusion_on_grid=True):
+        """Dense decoding with per-image precomputation.
+
+        fusion_on_grid=False: numerically equivalent to forward() dense mode
+        (window projections folded into convs; fusion + head still per pixel).
+        fusion_on_grid=True: additionally evaluates the gated fusion once on the
+        1/8 grid and bilinearly samples the fused features per pixel
+        (approximation: fusion is nonlinear, features are smooth).
+        """
+        B, _, H8, W8 = feat_s8.shape
+        H_full, W_full = H8 * 8, W8 * 8
+        target_h = target_h or H_full
+        target_w = target_w or W_full
+        dev = feat_s8.device
+
+        # per-image precompute: window projections as convs (exact)
+        m8 = self._win_proj_as_conv(feat_s8, self.win_proj_s8)
+        m16 = self._win_proj_as_conv(feat_s16, self.win_proj_s16)
+        mctx = self._win_proj_as_conv(ctx_s8, self.win_proj_ctx)
+        mf1 = self._win_proj_as_conv(feat1_s8, self.win_proj_feat1)
+
+        if fusion_on_grid:
+            # fuse once on the 1/8 grid; f16 map brought to s8 resolution first
+            m16_s8 = F.interpolate(m16, size=(H8, W8), mode='bilinear', align_corners=False)
+            fused_map = self._fuse_features(
+                m16_s8.permute(0, 2, 3, 1), m8.permute(0, 2, 3, 1), mctx.permute(0, 2, 3, 1)
+            ).permute(0, 3, 1, 2)  # [B, hidden, H8, W8]
+
+        ys = torch.arange(target_h, dtype=torch.float32, device=dev)
+        xs = torch.arange(target_w, dtype=torch.float32, device=dev)
+        if target_h != H_full or target_w != W_full:
+            ys = (ys + 0.5) * (H_full / target_h) - 0.5
+            xs = (xs + 0.5) * (W_full / target_w) - 0.5
+        gy, gx = torch.meshgrid(ys, xs, indexing='ij')
+        coords = torch.stack([gx, gy], -1).reshape(1, -1, 2).expand(B, -1, -1)
+
+        cn = coords.clone().float()
+        cn[..., 0] = 2.0 * (cn[..., 0] + 0.5) / W_full - 1.0
+        cn[..., 1] = 2.0 * (cn[..., 1] + 0.5) / H_full - 1.0
+        cn.clamp_(-1 + 1e-6, 1 - 1e-6)
+
+        coarse_at_q = self._sample_features(coarse_flow, cn)
+        coarse_at_q[..., 0] = coarse_at_q[..., 0] * (W_full / W8)
+        coarse_at_q[..., 1] = coarse_at_q[..., 1] * (H_full / H8)
+
+        warp_x = cn[..., 0] + 2.0 * coarse_at_q[..., 0] / W_full
+        warp_y = cn[..., 1] + 2.0 * coarse_at_q[..., 1] / H_full
+        wc = torch.stack([warp_x, warp_y], -1).clamp(-1 + 1e-6, 1 - 1e-6)
+        f1w = self._sample_features(mf1, wc)
+
+        if fusion_on_grid:
+            fused = self._sample_features(fused_map, cn)
+        else:
+            fused = self._fuse_features(self._sample_features(m16, cn),
+                                        self._sample_features(m8, cn),
+                                        self._sample_features(mctx, cn))
+
+        coarse_norm = coarse_at_q.clone().float()
+        coarse_norm[..., 0] /= W_full
+        coarse_norm[..., 1] /= H_full
+
+        mlp_parts = [fused, f1w, cn, coarse_norm]
+        if self.use_pe:
+            p = (coords.float() + 0.5) / 8.0 - 0.5
+            c = p - p.floor() - 0.5
+            freqs = 2.0 ** torch.arange(self.pe_freqs, device=c.device, dtype=c.dtype)
+            ang = 2.0 * torch.pi * c.unsqueeze(-1) * freqs
+            mlp_parts.append(torch.cat([ang.sin(), ang.cos()], -1).flatten(-2).to(fused.dtype))
+        mlp_in = torch.cat(mlp_parts, dim=-1)
+
+        if self.head_mode == 'convex':
+            win_flow = self._sample_window_raw(coarse_flow, cn, self.window_size).float()
+            win_flow[..., 0] = win_flow[..., 0] * (W_full / W8)
+            win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
+            candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)
+            logits = self.convex_head(mlp_in).float() + self.convex_prior
+            weights = torch.softmax(logits, dim=-1)
+            flow = (weights.unsqueeze(-1) * candidates).sum(dim=2)
+        else:
+            delta = self.flow_head(mlp_in).clone().float()
+            delta[..., 0] = delta[..., 0] * W_full
+            delta[..., 1] = delta[..., 1] * H_full
+            flow = coarse_at_q + delta
+
+        return flow.reshape(B, target_h, target_w, 2).permute(0, 3, 1, 2)
+
     def _fuse_features(self, feat_s16, feat_s8, ctx_s8):
         # InfiniDepth Eq. 3 — two gated residual fusion steps
         h2 = self.ffn1(feat_s8 + torch.sigmoid(self.gate1) * self.proj_ctx(ctx_s8))
