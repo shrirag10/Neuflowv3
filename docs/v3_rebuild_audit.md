@@ -113,6 +113,31 @@ fusion (never ablated — flagged as an open ablation, not assumed useful), end-
 training (diverged at local compute; untested on HPC), half-resolution input (measured
 -1.2 px untrained; only revisit with retraining).
 
+## Part 2b — Rebuild results (2026-07-19, full set, VKITTI2 Scene18+20)
+
+`v3-rebuild` branch: unified conv-form decoder, trained 30K steps on the mixed stage AT
+the (2,4) schedule (`train_v3rebuild.sh`, checkpoints/neuflowv3_rebuild). Regression
+gate passed first (old checkpoint through rebuilt path reproduced 2.2027 exactly).
+
+| Config | Latency | EPE | 1px | 3px |
+|---|---|---|---|---|
+| rebuild, (2,4)+stride2 (native) | 28.3 ms (35.4 FPS) | 2.2338 | 75.89% | 89.31% |
+| rebuild, (1,8)+stride2 | 38.0 ms (26.3 FPS) | 2.0946 | 76.53% | 89.66% |
+| pre-rebuild decoder, same configs | 28.0 / 38.0 ms | 2.3248 / 2.2027 | 75.70 / 76.47% | |
+| v2 | ~37 ms | 2.324 | 77.6% | 89.8% |
+
+Measured statements:
+- Training at the (2,4) schedule improved (2,4) inference by 3.9% EPE; the open audit
+  item "effect size pending" is now answered.
+- It also improved (1,8) inference by 4.9% (2.0946, best v3 number recorded). Training
+  against rougher coarse flow did not hurt the longer schedule; it helped it.
+- The 28 ms config is now better than v2 on mean EPE (2.234 vs 2.324) AND 24% faster,
+  full-set. The 1px gap REMAINS (75.9 vs 77.6) and the domain confound REMAINS
+  (training mixture includes same-simulator scenes; v2's does not).
+
+Still pending, unchanged: matched-data comparison (HPC), Jetson, Sintel/KITTI, Spring,
+1px-gap root cause.
+
 ## Part 3 — Execution order
 
 1. Full-set evals (running) — replaces every subset number in the docs.
