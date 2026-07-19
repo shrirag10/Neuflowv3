@@ -7,7 +7,7 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=%x_%j.log
 
-module load $(module -t avail 2>&1 | grep -iE "^(anaconda|miniconda)" | sort -V | tail -1)
+module load $(module -t avail 2>&1 | grep -iE "^(anaconda|miniconda)" | sed 's/[[:space:]]*<.*//' | sort -V | tail -1)
 source activate neuflow
 cd $HOME/NeuFlow_v3
 

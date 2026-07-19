@@ -7,7 +7,7 @@ set -e
 
 echo "== 1/4 conda module =="
 # module names differ per site config; detect what exists
-ANACONDA_MOD=$(module -t avail 2>&1 | grep -iE "^(anaconda|miniconda)" | sort -V | tail -1)
+ANACONDA_MOD=$(module -t avail 2>&1 | grep -iE "^(anaconda|miniconda)" | sed 's/[[:space:]]*<.*//' | sort -V | tail -1)
 if [ -z "$ANACONDA_MOD" ]; then
     echo "No anaconda/miniconda module found. Run 'module avail' and load manually."
     exit 1
