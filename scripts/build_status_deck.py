@@ -420,6 +420,16 @@ def main():
              'stays flat at 769 MB because one cached backbone state serves every interaction.', 11, False, INK)
     footer(s, i)
 
+    # ============================================ 11d · v2 speedup study
+    s, i = slide()
+    header(s, 'V2 OPTIMIZATION', 'Inside v2: what its 35 ms buys, and what can be dropped')
+    s.shapes.add_picture('results/v2_speedup_study.png', Inches(0.75), Inches(1.75), width=Inches(11.85))
+    add_text(s, 0.75, 5.85, 11.9, 1.2,
+             'The eight 1/8-scale refinement iterations consume 59% of the runtime; iterations 7-12 buy almost nothing (2.29 vs 2.27 px).\n'
+             'Best frozen-weights operating point: 2 iterations at 1/16 (0.5 ms each) + 4 at 1/8, giving +38% FPS for 0.13 px. Retraining AT\n'
+             'this schedule on HPC should recover most of that gap. Halving input resolution (144 FPS) costs 1.2 px untrained: retrain to use.', 11, False, INK)
+    footer(s, i)
+
     # ============================================ 12 · Objectives
     s, i = slide()
     header(s, 'OBJECTIVES', 'Where the three goals stand')
