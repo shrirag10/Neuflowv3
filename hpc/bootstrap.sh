@@ -22,7 +22,7 @@ fi
 source activate neuflow 2>/dev/null || conda activate neuflow
 # torch pip wheels bundle the CUDA runtime; only the node's driver matters
 pip install --quiet torch torchvision --index-url https://download.pytorch.org/whl/cu121
-pip install --quiet opencv-python-headless matplotlib tqdm huggingface_hub
+pip install --quiet opencv-python-headless matplotlib tqdm huggingface_hub h5py
 
 echo "== 3/4 scratch + dataset symlink =="
 mkdir -p /scratch/$USER/neuflow_datasets /scratch/$USER/neuflow_ckpts
