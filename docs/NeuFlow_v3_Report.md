@@ -212,7 +212,7 @@ same settings is the expected scale-up.
 Yes — query any grid (`target_h/w` are free). The Spring benchmark (GT at 2× input
 resolution) is the planned test only queryable decoders can take natively.
 
-## 7. Repository organization
+## 8. Repository organization
 
 ```
 NeuFlow_v3/
