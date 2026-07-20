@@ -431,15 +431,68 @@ def main():
              '2.288), or 39.6 ms at clearly better EPE (2.245). v3 now beats v2 on its own dense workload. Gap left: 1px acc (75.7 vs 77.4).', 11, False, INK)
     footer(s, i)
 
+    # ============================================ 11e · Audit + rebuild
+    s, i = slide()
+    header(s, 'RIGOR', 'Critical audit and clean rebuild')
+    add_text(s, 0.75, 1.7, 5.9, 4.4,
+             'Every result was re-derived from first principles and tagged\n'
+             'VERIFIED, APPROXIMATION, PENDING, or WRONG\n'
+             '(docs/v3_rebuild_audit.md).\n\n'
+             'Found and corrected:\n'
+             '1.  Training-data confound: v3-mixed saw VKITTI2-domain\n'
+             '     data, v2 did not. Accuracy wins are now claimed only\n'
+             '     where fair (chairs-only transfer; speed at equal EPE).\n'
+             '2.  Subset numbers promoted too early. All headline\n'
+             '     numbers now come from the full 1,174-pair set.\n'
+             '3.  The decoder was rewritten as one unified compute\n'
+             '     path (conv-form projections). Regression test:\n'
+             '     output identical to 4 decimals before retraining.', 12, False, INK)
+    add_text(s, 7.0, 1.7, 5.6, 4.4,
+             'Full-set results after rebuild (VKITTI2 Scene18+20):\n\n'
+             'NeuFlow v2               2.324 px    37 ms\n'
+             'v3 rebuild, (2,4)        2.234 px    28 ms\n'
+             'v3 rebuild, (1,8)        2.095 px    38 ms\n\n'
+             'v3 now offers both: faster at better EPE, or equal\n'
+             'latency at 10% better EPE.\n\n'
+             'Still true and stated: 1 px accuracy trails v2\n'
+             '(76.5% vs 77.6%); the accuracy comparison carries\n'
+             'the domain confound until the fair-mix run lands.', 12, False, INK)
+    footer(s, i)
+
+    # ============================================ 11f · HPC status
+    s, i = slide()
+    header(s, 'SCALE-UP', 'HPC (Explorer): operational; results pending')
+    add_text(s, 0.75, 1.7, 5.9, 4.6,
+             'Cluster setup completed and verified end to end:\n\n'
+             '•  Environment reproducible from one script\n'
+             '•  All four datasets staged on /scratch: FlyingChairs,\n'
+             '    VKITTI2 (all 5 scenes), MPI-Sintel, Spring (61 GB,\n'
+             '    train split, left camera + forward flow)\n'
+             '•  GPU partition includes H200s (8 h job limit)\n'
+             '•  Checkpoints every 5K steps; evaluation runs on\n'
+             '    the cluster with the same full-set protocol', 12, False, INK)
+    add_text(s, 7.0, 1.7, 5.6, 4.6,
+             'Three jobs queued; what each answers:\n\n'
+             '1.  grand-mix (chairs+VKITTI2+Sintel, batch 16, 100K):\n'
+             '     the fair-comparison run, removes the domain confound\n'
+             '2.  rebuild-big (batch 16, 100K): does scale alone beat\n'
+             '     the laptop result (2.095)?\n'
+             '3.  spring (adds Spring at 1080p): high-resolution\n'
+             '     training toward the 4K-GT evaluation\n\n'
+             'No numbers yet. Nothing here is claimed as a result\n'
+             'until the full-set evaluation of each checkpoint.', 12, False, INK)
+    footer(s, i)
+
     # ============================================ 12 · Objectives
     s, i = slide()
     header(s, 'OBJECTIVES', 'Where the three goals stand')
     add_text(s, 0.75, 1.85, 11.8, 4.2,
-             'Goal 1, beat v2 accuracy.  Done: 2.18 vs 2.32 px mean EPE (6% better) with mixed training.\n'
-             '1 px accuracy is within 1.2 points of v2 (76.4 vs 77.6) and 3 px is at parity.\n\n'
-             'Goal 2, less compute, edge-viable.  Done for the sparse workload: same latency as a v2 full frame,\n'
-             '13% fewer parameters, ~2.2 GB VRAM at inference, and repeat queries about 20x cheaper than v2\n'
-             'recomputing. Dense-output mode stays slower; not the target use.\n\n'
+             'Goal 1, beat v2 accuracy.  Best full-set: 2.095 px vs 2.324 (10% better) at equal latency, or 2.234 px\n'
+             'while 24% faster. Caveat stated openly: v3 training saw VKITTI2-domain data, v2 did not; the\n'
+             'confound-free verdict comes from the grand-mix HPC run. 1 px accuracy still trails (76.5 vs 77.6).\n\n'
+             'Goal 2, less compute, edge-viable.  Sparse: 800 answers at 23.9 ms (41.8 FPS), repeat queries ~20x\n'
+             'cheaper than v2 recomputing. Dense: 28 ms vs v2 36 ms after the decoder rework. 13% fewer\n'
+             'parameters. Edge validation on a Jetson remains pending; all numbers are RTX 4060.\n\n'
              'Goal 3, do what v2 cannot.  Done: continuous-coordinate queries, output at any resolution, sparse\n'
              'matches dense exactly, plus a working interactive tool.',
              13, False, INK)
