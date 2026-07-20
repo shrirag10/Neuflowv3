@@ -7,16 +7,16 @@
 #SBATCH --time=08:00:00
 #SBATCH --output=%x_%j.log
 
-source /etc/profile.d/modules.sh 2>/dev/null || true
-module load miniconda3/25.9.1
+# absolute env interpreter: immune to module/activation quirks in batch shells
 export PYTHONNOUSERSITE=1
-source activate neuflow
+PY=$HOME/.conda/envs/neuflow/bin/python3
+$PY -c "import torch" || { echo "ENV BROKEN: $PY lacks torch" >&2; exit 1; }
 cd $HOME/NeuFlow_v3
 
 CKPT_DIR=/scratch/$USER/neuflow_ckpts/spring
 mkdir -p "$CKPT_DIR"
 
-python3 train.py \
+$PY train.py \
   --stage spring_mix \
   --implicit --sparse_loss \
   --num_sparse_points 4096 --adaptive_query_ratio 0.5 --no_query_jitter \
