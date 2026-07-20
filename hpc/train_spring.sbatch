@@ -1,10 +1,10 @@
 #!/bin/bash
 #SBATCH --job-name=nf3-spring
 #SBATCH --partition=gpu
-#SBATCH --gres=gpu:v100-sxm2:1
+#SBATCH --gres=gpu:h200:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=48G
-#SBATCH --time=23:00:00
+#SBATCH --time=08:00:00
 #SBATCH --output=%x_%j.log
 
 module load $(module -t avail 2>&1 | grep -iE "^(anaconda|miniconda)" | sed 's/[[:space:]]*<.*//' | sort -V | tail -1)
