@@ -19,7 +19,7 @@ mkdir -p "$CKPT_DIR"
 # Backbone unfrozen at 1e-5 (100x below decoder LR). UNVERIFIED for this model:
 # diverged at batch 4 on laptop; batch 16 is the standard fix, not a guarantee.
 $PY train.py \
-  --stage vkitti2_mix \
+  --stage mix_chairs_vkitti2 \
   --implicit --sparse_loss --unfreeze_all --lr_backbone 1e-5 \
   --num_sparse_points 4096 --adaptive_query_ratio 0.5 --no_query_jitter \
   --batch_size 16 --num_workers 8 \

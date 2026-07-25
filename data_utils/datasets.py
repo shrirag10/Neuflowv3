@@ -454,22 +454,26 @@ def build_train_dataset(stage):
     elif stage == 'grand_mix':
         # chairs + vkitti2(6 variants) + sintel clean/final — one step toward
         # v2's training distribution (fair-comparison item in the audit)
-        aug_params = {'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}
-        chairs = FlyingChairs({'crop_size': (368, 496), 'min_scale': 0.1, 'max_scale': 1.0, 'do_flip': True}, split='training')
-        vk = VKITTI2(aug_params=aug_params, variants=['clone', 'fog', 'morning', 'overcast', 'rain', 'sunset'])
-        sc = MpiSintel(aug_params, split='training', dstype='clean')
-        sf = MpiSintel(aug_params, split='training', dstype='final')
+        # ONE crop size across all sub-datasets or default_collate fails
+        # (chairs is 384x512 native, so width caps at ~496)
+        crop = (320, 496)
+        chairs = FlyingChairs({'crop_size': crop, 'min_scale': -0.1, 'max_scale': 0.6, 'do_flip': True}, split='training')
+        vk = VKITTI2(aug_params={'crop_size': crop, 'min_scale': -0.1, 'max_scale': 0.5, 'do_flip': True},
+                     variants=['clone', 'fog', 'morning', 'overcast', 'rain', 'sunset'])
+        sc = MpiSintel({'crop_size': crop, 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='clean')
+        sf = MpiSintel({'crop_size': crop, 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='final')
         train_dataset = chairs + vk + 5 * sc + 5 * sf
         print(f'grand_mix: chairs={len(chairs)} vkitti2={len(vk)} sintel={len(sc)}+{len(sf)} (x5)')
 
     elif stage == 'spring_mix':
-        aug_params = {'crop_size': (368, 768), 'min_scale': -0.4, 'max_scale': 0.4, 'do_flip': True}
-        spring = Spring(aug_params=aug_params)
-        chairs = FlyingChairs({'crop_size': (368, 496), 'min_scale': 0.1, 'max_scale': 1.0, 'do_flip': True}, split='training')
-        vk = VKITTI2(aug_params={'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True},
+        # ONE crop size across all sub-datasets or default_collate fails
+        crop = (320, 496)
+        spring = Spring(aug_params={'crop_size': crop, 'min_scale': -0.4, 'max_scale': 0.4, 'do_flip': True})
+        chairs = FlyingChairs({'crop_size': crop, 'min_scale': -0.1, 'max_scale': 0.6, 'do_flip': True}, split='training')
+        vk = VKITTI2(aug_params={'crop_size': crop, 'min_scale': -0.1, 'max_scale': 0.5, 'do_flip': True},
                      variants=['clone', 'fog', 'morning', 'overcast', 'rain', 'sunset'])
-        sc = MpiSintel({'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='clean')
-        sf = MpiSintel({'crop_size': (368, 768), 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='final')
+        sc = MpiSintel({'crop_size': crop, 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='clean')
+        sf = MpiSintel({'crop_size': crop, 'min_scale': -0.2, 'max_scale': 0.5, 'do_flip': True}, split='training', dstype='final')
         train_dataset = 2 * spring + chairs + vk + 5 * sc + 5 * sf
         print(f'spring_mix: spring={len(spring)}(x2) chairs={len(chairs)} vkitti2={len(vk)} sintel={len(sc)}+{len(sf)}(x5)')
 
