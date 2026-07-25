@@ -40,3 +40,9 @@ Every entry: what changed, why, and its verification status.
 - **Cluster switchover**: checking out v3-dev on Explorer, cancelling the five
   rebuild-code jobs, resubmitting grandmix/big18/spring/distill/uncertainty
   from v3-dev behind env job 8718244.
+
+- **Cluster switched to v3-dev.** Env job 8718244 VERIFIED (torch 2.5.1+cu121,
+  ALL_IMPORTS_OK). Rebuild-code jobs cancelled. Resubmitted from v3-dev:
+  grandmix=8718342, big18=8718343, spring=8718344, distill=8718345,
+  uncG=8718346 — all pending on GPU availability (H200). Health check
+  (dataset counts + it/s) pending; nothing is a result until then.
