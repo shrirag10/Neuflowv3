@@ -60,3 +60,10 @@ Every entry: what changed, why, and its verification status.
   single shape per stage, 0/60 load errors. mix_chairs_vkitti2=34,958,
   grand_mix=45,368, spring_mix=55,294 samples. Ready for submission —
   user submits manually.
+
+- **Spring crash diagnosed** (job 8718657, died step 11): Spring flo5 GT
+  contains NaN at invalid pixels; NaN reached the adaptive sampler's weight
+  map and torch.multinomial device-asserted. Fixed twice over: read_flo5 maps
+  NaN/inf to 1e9 (validity mask then excludes them, matching the |flow|<1000
+  convention), and adaptive_flow_query sanitizes its weights before
+  multinomial. Other four stages are Spring-free and unaffected.
