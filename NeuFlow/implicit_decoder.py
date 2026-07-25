@@ -52,6 +52,7 @@ class ImplicitFlowDecoder(nn.Module):
         hidden_dim: int = 128,
         hidden_list: list = None,
         window_size: int = 3,
+        predict_uncertainty: bool = False,
     ):
         super().__init__()
 
@@ -63,6 +64,7 @@ class ImplicitFlowDecoder(nn.Module):
         self.feat_dim_s8 = feat_dim_s8
         self.feat_dim_ctx = feat_dim_ctx
         self.window_size = window_size
+        self.predict_uncertainty = predict_uncertainty
 
         k2 = window_size ** 2
         # window projections (stored as Linear for checkpoint compatibility;
@@ -86,10 +88,11 @@ class ImplicitFlowDecoder(nn.Module):
             nn.Linear(hidden_dim * 2, hidden_dim),
         )
 
-        # convex head: k2 window candidates + 1 bilinear candidate
+        # convex head: k2 window candidates + 1 bilinear candidate,
+        # +1 log-scale channel when predicting uncertainty (option G)
         self.convex_head = MLP(
             in_dim=hidden_dim + feat_dim_s8 + 2 + 2,   # fused | f1_warped | xy | coarse
-            out_dim=k2 + 1,
+            out_dim=k2 + 1 + (1 if predict_uncertainty else 0),
             hidden_list=hidden_list,
         )
         prior = torch.zeros(k2 + 1)
@@ -199,9 +202,17 @@ class ImplicitFlowDecoder(nn.Module):
         win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
         candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)
 
-        logits = self.convex_head(mlp_in).float() + self.convex_prior
+        head_out = self.convex_head(mlp_in).float()
+        k2p1 = self.window_size ** 2 + 1
+        logits = head_out[..., :k2p1] + self.convex_prior
         weights = torch.softmax(logits, dim=-1)
-        return (weights.unsqueeze(-1) * candidates).sum(dim=2)
+        flow = (weights.unsqueeze(-1) * candidates).sum(dim=2)
+
+        if self.predict_uncertainty:
+            # b = expected L1 error scale (Laplace); exp keeps it positive.
+            # Clamp the log for numerical safety; b ~= 1 px at zero init.
+            self.last_b = torch.exp(head_out[..., k2p1].clamp(-6.0, 6.0))
+        return flow
 
     def decode_dense(self, maps, coarse_flow, target_h=None, target_w=None, stride=2):
         """Dense grid decode. stride=2 + bilinear upsample measured at no EPE cost."""

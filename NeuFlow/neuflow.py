@@ -17,7 +17,8 @@ from huggingface_hub import PyTorchModelHubMixin
 class NeuFlow(torch.nn.Module,
               PyTorchModelHubMixin,
               repo_url="https://github.com/neufieldrobotics/NeuFlow_v2", license="apache-2.0", pipeline_tag="image-to-image"):
-    def __init__(self, use_implicit: bool = True, head_mode: str = 'convex', use_pe: bool = False):
+    def __init__(self, use_implicit: bool = True, head_mode: str = 'convex', use_pe: bool = False,
+                 predict_uncertainty: bool = False):
         super(NeuFlow, self).__init__()
 
         # v3 rebuild: convex head only, no PE (docs/v3_rebuild_audit.md Part 2).
@@ -64,6 +65,7 @@ class NeuFlow(torch.nn.Module,
                 hidden_dim=config.feature_dim_s16,
                 hidden_list=config.implicit_mlp_hidden_list,
                 window_size=config.implicit_window_size,
+                predict_uncertainty=predict_uncertainty,
             )
         else:
             # ---- Legacy convex-upsampler path ----
@@ -164,7 +166,7 @@ class NeuFlow(torch.nn.Module,
         }
 
     def decode_queries(self, state, query_coords=None, target_h=None, target_w=None,
-                       adaptive_n=None, adaptive_ratio=0.7):
+                       adaptive_n=None, adaptive_ratio=0.7, return_uncertainty=False):
         """Decode flow from cached coarse state at arbitrary query coords/resolution.
 
         Args:
@@ -194,8 +196,13 @@ class NeuFlow(torch.nn.Module,
                 state['feature0_s8'], state['feature1_s8'],
                 state['feature0_s16'], state['context0_s8'])
         if query_coords is not None:
-            return self.implicit_decoder_module.decode(
+            flow = self.implicit_decoder_module.decode(
                 state['_maps'], state['coarse_flow_s8'], query_coords)
+            if return_uncertainty:
+                if not self.implicit_decoder_module.predict_uncertainty:
+                    raise RuntimeError('model was not built with predict_uncertainty=True')
+                return flow, self.implicit_decoder_module.last_b
+            return flow
         return self.implicit_decoder_module.decode_dense(
             state['_maps'], state['coarse_flow_s8'], target_h, target_w, stride=1)
 
