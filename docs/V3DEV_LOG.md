@@ -67,3 +67,10 @@ Every entry: what changed, why, and its verification status.
   NaN/inf to 1e9 (validity mask then excludes them, matching the |flow|<1000
   convention), and adaptive_flow_query sanitizes its weights before
   multinomial. Other four stages are Spring-free and unaffected.
+
+- **Deck updated (23 slides):** three new slides before the FAQ — current-work
+  table (five queued experiments, explicitly marked "no results yet"),
+  flowcharts for self-distillation and the uncertainty head, and full-pipeline
+  pseudocode (coarse pass / query batch / training loss). Verified by render.
+  Note: first insertion attempt silently no-op'd on a wrong anchor; now the
+  builder edit asserts the anchor and the inserted content.

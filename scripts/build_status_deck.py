@@ -481,6 +481,109 @@ def main():
     takeaway(s, 'Validation on public benchmarks is done on laptop hardware; both requests convert the method into thesis-scale evidence.')
     footer(s, i)
 
+    # ============================================ NEW · algorithm updates (2026-07-27)
+    s, i = slide()
+    header(s, 'CURRENT WORK', 'Algorithm updates in training now (no results yet)')
+    add_text(s, 0.75, 1.6, 11.8, 0.35,
+             'Five experiments queued on the university cluster (H200 GPUs, batch 16, 100K steps). '
+             'All numbers pending: nothing below is a result until evaluated on the full validation set.', 11.5, True, INK)
+    rows = [
+        ('Refinement self-distillation',
+         'The 8-iteration refinement loop is 59% of runtime and iterations 5-8 barely change the answer. '
+         'Retrain ONLY the refinement module so 3 iterations reproduce its own 8-iteration output (teacher = the frozen '
+         'model itself, no ground truth). If it holds, v3 sparse goes from 30 to ~44 FPS with the decoder untouched.'),
+        ('Uncertainty head',
+         'One extra decoder output per query: the predicted error scale b. Trained by a self-calibrating loss '
+         '(underestimate error and the loss explodes, overestimate and the log-penalty bites). Gives RANSAC/SLAM '
+         'consumers a per-point trust signal and makes query selection principled. No baseline network offers this.'),
+        ('Scale-up at the deployment schedule',
+         'The mixed-data recipe retrained at batch 16, 100K steps, at the exact iteration schedule used in deployment, '
+         'removing a train/eval mismatch present in earlier runs.'),
+        ('Fair-comparison training (grand mix)',
+         'Adds Sintel to the mix to approach v2 training distribution: addresses the data confound in current '
+         'v3-vs-v2 accuracy claims.'),
+        ('Spring 1080p training',
+         'Prerequisite for the above-input-resolution evaluation (4K ground truth) that only a queryable decoder can take.'),
+    ]
+    y = 2.15
+    for name, desc in rows:
+        add_text(s, 0.75, y, 2.6, 0.9, name, 11, True, INK)
+        add_text(s, 3.55, y, 9.0, 0.9, desc, 10, False, INK, line_spacing=1.05)
+        y += 0.92
+    footer(s, i)
+
+    # ============================================ NEW · flowchart: distill + uncertainty
+    s, i = slide()
+    header(s, 'CURRENT WORK', 'The two mechanisms, as flowcharts')
+    add_text(s, 0.75, 1.55, 5.6, 0.3, 'Refinement self-distillation (trains only the refine module)', 11.5, True, INK)
+    box(s, 0.75, 2.0, 2.3, 0.55, 'Image pair', size=10)
+    box(s, 0.75, 2.85, 2.3, 0.55, 'Frozen model\n8 iterations', size=10)
+    box(s, 3.85, 2.85, 2.3, 0.55, 'Trainable copy\n3 iterations', size=10)
+    box(s, 0.75, 3.7, 2.3, 0.55, 'Teacher coarse flow', dark=True, size=10)
+    box(s, 3.85, 3.7, 2.3, 0.55, 'Student coarse flow', dark=True, size=10)
+    box(s, 2.3, 4.55, 2.3, 0.55, 'L1 difference\n= training loss', size=10)
+    arrow(s, 1.9, 2.55, 1.9, 2.85)
+    arrow(s, 3.05, 2.27, 5.0, 2.85)
+    arrow(s, 1.9, 3.4, 1.9, 3.7)
+    arrow(s, 5.0, 3.4, 5.0, 3.7)
+    arrow(s, 1.9, 4.25, 3.0, 4.55)
+    arrow(s, 5.0, 4.25, 3.9, 4.55)
+    add_text(s, 0.75, 5.4, 5.8, 1.2,
+             'No labels needed: the model supervises itself. Only the refinement '
+             'weights update; backbone, matching and decoder stay frozen, so '
+             'nothing already validated is at risk.', 10, False, INK)
+
+    add_text(s, 7.0, 1.55, 5.6, 0.3, 'Uncertainty head (one extra output channel)', 11.5, True, INK)
+    box(s, 7.0, 2.0, 2.4, 0.55, 'Query features\n(fused, 260-d)', size=10)
+    box(s, 7.0, 2.95, 2.4, 0.55, 'Head MLP', size=10)
+    box(s, 10.1, 2.6, 2.3, 0.55, '10 blend weights\n-> flow (x, y)', dark=True, size=10)
+    box(s, 10.1, 3.45, 2.3, 0.55, '1 scale channel\n-> b = exp(s)', dark=True, size=10)
+    arrow(s, 8.2, 2.55, 8.2, 2.95)
+    arrow(s, 9.4, 3.1, 10.1, 2.87)
+    arrow(s, 9.4, 3.35, 10.1, 3.72)
+    add_text(s, 7.0, 4.3, 5.5, 2.2,
+             'Training loss per query:   |error| / b  +  2 log b\n\n'
+             'If the head claims confidence (small b) and is wrong, the first term '
+             'explodes; if it always claims ignorance (large b), the second term '
+             'grows. The minimum is honest self-assessment: b learns to match the '
+             'actual expected error. At initialization b = 1 px everywhere.', 10, False, INK)
+    footer(s, i)
+
+    # ============================================ NEW · pseudocode
+    s, i = slide()
+    header(s, 'METHOD', 'The complete algorithm, as pseudocode')
+    code1 = ('# ONCE per image pair  (~23 ms at 384x1248, RTX 4060)\n'
+             'f8, f16, ctx     = backbone(I0, I1)              # frozen v2\n'
+             'flow_s16         = global_match(cross_attn(f16))\n'
+             'for k in 1..K16: flow_s16 += refine16(corr(flow_s16), ctx)\n'
+             'flow_s8 = up2x(flow_s16)\n'
+             'for k in 1..K8:  flow_s8  += refine8(corr(flow_s8), ctx)\n'
+             'state = {f8, f16, ctx, warp_map, flow_s8}         # cached')
+    code2 = ('# PER QUERY BATCH  (~1.6 ms for up to ~2,000 points)\n'
+             'for each query (x, y):                            # continuous coords\n'
+             '    feat   = sample(state, x, y)                  # bilinear, 260-d\n'
+             '    w[0..9], s = head(feat)                       # softmax weights + log-scale\n'
+             '    cand   = 3x3 coarse-flow neighborhood + bilinear value\n'
+             '    flow   = sum_i w[i] * cand[i]                 # bounded convex blend\n'
+             '    b      = exp(s)                               # predicted error, px\n'
+             'return flow[, b]')
+    code3 = ('# TRAINING (decoder only; backbone frozen)\n'
+             'queries ~ 50% at flow-gradient boundaries, 50% uniform (N=4096)\n'
+             'loss = sum_iters gamma^(T-t) * L1(flow_t, GT)     # gamma = 0.8\n'
+             'final iter with uncertainty:  |err|/b + 2 log b   # self-calibrating')
+    for y, code in [(1.7, code1), (3.6, code2), (5.55, code3)]:
+        tb = s.shapes.add_textbox(Inches(0.9), Inches(y), Inches(11.5), Inches(1.8))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        for j, line in enumerate(code.split('\n')):
+            para = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
+            r = para.add_run(); r.text = line
+            r.font.name = 'Consolas'; r.font.size = Pt(10.5)
+            r.font.color.rgb = INK
+            if line.lstrip().startswith('#'):
+                r.font.bold = True
+    footer(s, i)
+
     # ============================================ 14 · FAQ
     s, i = slide()
     header(s, 'Q&A PREP', 'Questions I expect')
