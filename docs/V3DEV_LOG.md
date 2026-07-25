@@ -55,3 +55,8 @@ Every entry: what changed, why, and its verification status.
   one-crop rule. Fixed: common (320, 496) crop in both stages; sbatch stage
   names corrected. Jobs NOT resubmitted automatically (user runs sbatch
   manually per new policy).
+
+- **All three mix stages verified on cluster** (user-run, compute node):
+  single shape per stage, 0/60 load errors. mix_chairs_vkitti2=34,958,
+  grand_mix=45,368, spring_mix=55,294 samples. Ready for submission —
+  user submits manually.
