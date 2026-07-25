@@ -70,6 +70,8 @@ def get_args_parser():
                         help='Implicit decoder head: direct delta regression or AnyFlow-style convex weights')
     parser.add_argument('--pe', action='store_true',
                         help='Fourier positional encoding of the sub-cell query offset')
+    parser.add_argument('--uncertainty', action='store_true',
+                        help='Option G: head predicts per-query error scale b; final-iteration loss |err|/b + log b')
     parser.add_argument('--sparse_loss', action='store_true',
                         help='Use sparse-point loss (InfiniDepth-style)')
     parser.add_argument('--num_sparse_points', default=8192, type=int,
@@ -116,7 +118,8 @@ def main(args):
         os.makedirs(args.checkpoint_dir, exist_ok=True)
 
     # model
-    model = NeuFlow(use_implicit=args.implicit, head_mode=args.head, use_pe=args.pe).to(device)
+    model = NeuFlow(use_implicit=args.implicit, head_mode=args.head, use_pe=args.pe,
+                    predict_uncertainty=args.uncertainty).to(device)
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -298,7 +301,13 @@ def main(args):
                             # Sparse prediction [B, N, 2] → [B, 2, N]
                             pred_sparse = pred.permute(0, 2, 1)
 
-                        i_loss = (pred_sparse - gt_at_query).abs().mean()
+                        err = (pred_sparse - gt_at_query).abs()
+                        if args.uncertainty and idx == n_preds - 1:
+                            # Laplace NLL on the final prediction: self-calibrating scale
+                            b = model_without_ddp.implicit_decoder_module.last_b.float()  # [B, N]
+                            i_loss = (err.sum(dim=1) / b + 2.0 * torch.log(b)).mean()
+                        else:
+                            i_loss = err.mean()
                         loss = loss + i_weight * i_loss
 
                     # Compute EPE on final prediction

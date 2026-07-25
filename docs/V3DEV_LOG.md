@@ -31,3 +31,12 @@ Every entry: what changed, why, and its verification status.
   training jobs dependency-chained behind it were submitted from the
   v3-rebuild checkout and will be CANCELLED and resubmitted from v3-dev once
   this branch is pushed and checked out on the cluster.
+
+- **Option G implemented on v3-dev** (decoder convex branch + train.py):
+  `--uncertainty` flag, Laplace loss on final iteration. CPU smoke: b=1.0 at
+  zero-init, old checkpoints load strict with flag off, gradients reach the
+  b channel. GPU validation pending (local driver down).
+- **hpc/train_uncertainty.sbatch**: vkitti2_mix, batch 16, 100K, (1,8), G on.
+- **Cluster switchover**: checking out v3-dev on Explorer, cancelling the five
+  rebuild-code jobs, resubmitting grandmix/big18/spring/distill/uncertainty
+  from v3-dev behind env job 8718244.

@@ -17,7 +17,8 @@ from huggingface_hub import PyTorchModelHubMixin
 class NeuFlow(torch.nn.Module,
               PyTorchModelHubMixin,
               repo_url="https://github.com/neufieldrobotics/NeuFlow_v2", license="apache-2.0", pipeline_tag="image-to-image"):
-    def __init__(self, use_implicit: bool = True, head_mode: str = 'regress', use_pe: bool = False):
+    def __init__(self, use_implicit: bool = True, head_mode: str = 'regress', use_pe: bool = False,
+                 predict_uncertainty: bool = False):
         super(NeuFlow, self).__init__()
 
         self.use_implicit = use_implicit
@@ -59,6 +60,7 @@ class NeuFlow(torch.nn.Module,
                 window_size=config.implicit_window_size,
                 head_mode=head_mode,
                 use_pe=use_pe,
+                predict_uncertainty=predict_uncertainty,
             )
         else:
             # ---- Legacy convex-upsampler path ----
@@ -159,7 +161,7 @@ class NeuFlow(torch.nn.Module,
         }
 
     def decode_queries(self, state, query_coords=None, target_h=None, target_w=None,
-                       adaptive_n=None, adaptive_ratio=0.7):
+                       adaptive_n=None, adaptive_ratio=0.7, return_uncertainty=False):
         """Decode flow from cached coarse state at arbitrary query coords/resolution.
 
         Args:
@@ -184,7 +186,7 @@ class NeuFlow(torch.nn.Module,
                 adaptive_ratio=adaptive_ratio,
             )  # [B, adaptive_n, 2]
 
-        return self.implicit_decoder_module(
+        flow = self.implicit_decoder_module(
             img=state['img0'],
             feat_s8=state['feature0_s8'],
             feat1_s8=state['feature1_s8'],
@@ -195,6 +197,11 @@ class NeuFlow(torch.nn.Module,
             target_h=target_h,
             target_w=target_w,
         )
+        if return_uncertainty:
+            if not self.implicit_decoder_module.predict_uncertainty:
+                raise RuntimeError('model was not built with predict_uncertainty=True')
+            return flow, self.implicit_decoder_module.last_b
+        return flow
 
     def decode_dense_fast(self, state, target_h=None, target_w=None, fusion_on_grid=True,
                           stride=1):

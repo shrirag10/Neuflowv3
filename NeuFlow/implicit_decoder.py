@@ -57,6 +57,7 @@ class ImplicitFlowDecoder(nn.Module):
         head_mode: str = 'regress',  # 'regress' (delta flow) | 'convex' (AnyFlow-style weights)
         use_pe: bool = False,     # Fourier-encode the sub-cell offset (AnyFlow psi(x_q - v*))
         pe_freqs: int = 4,
+        predict_uncertainty: bool = False,  # option G: extra channel = per-query error scale b
     ):
         super().__init__()
 
@@ -74,6 +75,7 @@ class ImplicitFlowDecoder(nn.Module):
         self.head_mode    = head_mode
         self.use_pe       = use_pe
         self.pe_freqs     = pe_freqs
+        self.predict_uncertainty = predict_uncertainty
 
         # --- Local-window projectors: k*k*C → C ---
         # Do NOT call center-init here; NeuFlow.__init__ runs Xavier over all
@@ -115,7 +117,7 @@ class ImplicitFlowDecoder(nn.Module):
             k2 = window_size ** 2
             self.convex_head = MLP(
                 in_dim=mlp_in_dim,
-                out_dim=k2 + 1,
+                out_dim=k2 + 1 + (1 if predict_uncertainty else 0),
                 hidden_list=hidden_list,
             )
             prior = torch.zeros(k2 + 1)
@@ -430,12 +432,18 @@ class ImplicitFlowDecoder(nn.Module):
             win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
             candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)  # [B,N,k2+1,2]
 
-            logits = self.convex_head(mlp_in).float() + self.convex_prior
+            head_out = self.convex_head(mlp_in).float()
+            k2p1 = self.window_size ** 2 + 1
+            logits = head_out[..., :k2p1] + self.convex_prior
             if zero_residual:
                 logits = torch.zeros_like(logits) + self.convex_prior
             weights = torch.softmax(logits, dim=-1)  # [B, N, k2+1]
 
             flow = (weights.unsqueeze(-1) * candidates).sum(dim=2)  # [B, N, 2]
+
+            if self.predict_uncertainty:
+                # b = predicted L1 error scale (Laplace); zero-init head -> b = 1 px
+                self.last_b = torch.exp(head_out[..., k2p1].clamp(-6.0, 6.0))
         else:
             delta_norm = self.flow_head(mlp_in)
             if zero_residual:
