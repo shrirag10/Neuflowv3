@@ -74,3 +74,9 @@ Every entry: what changed, why, and its verification status.
   pseudocode (coarse pass / query batch / training loss). Verified by render.
   Note: first insertion attempt silently no-op'd on a wrong anchor; now the
   builder edit asserts the anchor and the inserted content.
+
+- **First healthy training on HPC (user-verified):** grandmix 8718687
+  (45,368 imgs) and big18 8718688 (34,958 imgs) RUNNING on H200 node d4053 at
+  ~6.8 steps/s, batch 16 — ETA ~4 h for 100K steps, within the 8 h limit.
+  Early epe ~7.9 during LR warm-up, expected for these mixes. Spring, distill,
+  uncG submissions pending (user runs them after git pull for the NaN fix).
