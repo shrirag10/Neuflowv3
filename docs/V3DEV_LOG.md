@@ -46,3 +46,12 @@ Every entry: what changed, why, and its verification status.
   grandmix=8718342, big18=8718343, spring=8718344, distill=8718345,
   uncG=8718346 — all pending on GPU availability (H200). Health check
   (dataset counts + it/s) pending; nothing is a result until then.
+
+- **Five-job failure diagnosed (user-run diagnostics on cluster):** two bugs.
+  (1) `vkitti2_mix` stage never existed; real name `mix_chairs_vkitti2` —
+  three jobs died on UnboundLocalError. (2) grand_mix/spring_mix mixed crop
+  sizes across sub-datasets (368x496 chairs vs 368x768 rest), so
+  default_collate crashed — the mix_chairs_vkitti2 stage even documents the
+  one-crop rule. Fixed: common (320, 496) crop in both stages; sbatch stage
+  names corrected. Jobs NOT resubmitted automatically (user runs sbatch
+  manually per new policy).

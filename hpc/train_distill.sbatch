@@ -18,7 +18,7 @@ mkdir -p "$CKPT_DIR"
 
 
 $PY scripts/train_distill.py \
-  --stage vkitti2_mix \
+  --stage mix_chairs_vkitti2 \
   --batch_size 16 --num_workers 8 \
   --lr 1e-4 --num_steps 60000 --student_iters 3 \
   --checkpoint_dir "$CKPT_DIR"

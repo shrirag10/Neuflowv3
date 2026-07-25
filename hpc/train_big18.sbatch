@@ -17,7 +17,7 @@ CKPT_DIR=/scratch/$USER/neuflow_ckpts/big18_v3dev
 mkdir -p "$CKPT_DIR"
 
 $PY train.py \
-  --stage vkitti2_mix \
+  --stage mix_chairs_vkitti2 \
   --implicit --sparse_loss \
   --num_sparse_points 4096 --adaptive_query_ratio 0.5 --no_query_jitter \
   --batch_size 16 --num_workers 8 \
