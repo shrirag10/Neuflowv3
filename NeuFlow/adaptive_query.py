@@ -92,8 +92,8 @@ def adaptive_flow_query(
         if n_adaptive > 0 and K > 0:
             # Build importance weights from gradient magnitude at valid pixels
             weights = grad_b[valid_idx[:, 0], valid_idx[:, 1]]  # [K]
-            # Add small epsilon to ensure non-zero probability everywhere
-            weights = weights + 1e-3
+            # Sanitize + epsilon: multinomial device-asserts on NaN/inf/all-zero
+            weights = torch.nan_to_num(weights.float(), nan=0.0, posinf=0.0, neginf=0.0) + 1e-3
             weights = weights / weights.sum()
 
             # Multinomial sampling (with replacement for efficiency)

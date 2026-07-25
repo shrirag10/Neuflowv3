@@ -135,7 +135,11 @@ def read_flo5(filename):
     import h5py
     with h5py.File(filename, 'r') as f:
         flow = f['flow'][()]
-    return flow[::2, ::2].astype(np.float32) / 2.0
+    flow = flow[::2, ::2].astype(np.float32) / 2.0
+    # Spring GT contains NaN at invalid pixels (sky, out-of-frame). Map them to
+    # a huge magnitude so FlowDataset's |flow|<1000 validity check marks them
+    # invalid, and no NaN reaches gradients/multinomial/loss.
+    return np.nan_to_num(flow, nan=1e9, posinf=1e9, neginf=-1e9)
 
 
 def read_gen(file_name, pil=False):
