@@ -305,3 +305,12 @@ Every entry: what changed, why, and its verification status.
   visually verified before commit -- caught and fixed two layout bugs
   (picture-height math not matching actual PNG aspect ratios, causing four
   captions to overlap their charts; a text-wrap issue on the requests slide).
+
+- **README.md rewritten from scratch.** The old version predated the convex
+  head fix, mixed training, HPC results, and the uncertainty head entirely --
+  it still quoted the original mislabeled per-frame "1px acc 46.2%" bug and
+  a v3 EPE of 3.15 (worse than untrained). Replaced with current verified
+  results table, architecture description matching the actual convex head,
+  the two-pass API, HPC training/eval commands, and an updated file layout.
+  Fixed three markdown-lint warnings (blank lines around lists, code-fence
+  language) before committing.
