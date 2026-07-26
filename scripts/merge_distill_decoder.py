@@ -40,9 +40,15 @@ def main():
     # sources exactly (both frozen from the same v2 base) -- if it doesn't,
     # they are not mergeable and this would silently produce a broken model.
     skip_prefixes = ('refine_s8.', 'implicit_decoder_module.')
+    # BatchNorm running_mean/running_var/num_batches_tracked update on every
+    # forward pass in train mode REGARDLESS of requires_grad -- they drift
+    # apart between two training runs even with a frozen backbone. That
+    # drift is expected and harmless; only the actual learned weights (which
+    # never update without gradients) are a real compatibility signal.
+    bn_buffer_suffixes = ('.running_mean', '.running_var', '.num_batches_tracked')
     mismatches = []
     for k, v in decoder_ck.items():
-        if k.startswith(skip_prefixes):
+        if k.startswith(skip_prefixes) or k.endswith(bn_buffer_suffixes):
             continue
         if k not in distilled:
             mismatches.append(f'{k}: missing from --distilled')
