@@ -267,3 +267,16 @@ Every entry: what changed, why, and its verification status.
   HPC checkpoints (big18, uncG, grandmix). Needed since the laptop GPU is
   currently down (driver error) and all winning checkpoints live only on
   the cluster.
+
+- **Deck updated (24 slides) with verified HPC results:**
+  - Replaced the stale pre-bugfix "V3 Acceleration" slide (referenced a
+    deleted laptop-only chart, quoted old (2,4)-schedule numbers) with the
+    verified same-V100 sparse-speed story: parity on first query, ~7x on
+    repeat queries.
+  - New slide: native 4-panel image grid comparing v2 / grandmix / big18 /
+    uncG on the same VKITTI2 scene, generated on-cluster via
+    export_panels_hpc.py (laptop GPU is down) and pulled via scp.
+  - Objectives slide numbers updated: 11% EPE improvement (was 6%), 3px now
+    beats v2, 1px gap nearly closed, ~7x repeat-query speedup (was an
+    unverified 20x estimate). Removed the takeaway() line per earlier
+    instruction to drop that pattern.
