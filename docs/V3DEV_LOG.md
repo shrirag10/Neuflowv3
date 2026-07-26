@@ -338,3 +338,21 @@ Every entry: what changed, why, and its verification status.
   Re-verified with synthetic tests: BN-style drift now correctly ignored,
   a real weight conflict still correctly aborts. Merged checkpoint inherits
   its BN stats from --decoder (consistent with the rest of that checkpoint).
+
+- **Speaker notes added to all 17 deck slides** (build_final_deck.py note()
+  helper + per-slide notes list). Presenter-view talking points, honest tone,
+  no em-dashes. Verified 17/17 attached.
+
+- **END-TO-END distillation result (the test the reviewer demanded): NEGATIVE.**
+  Merged distill3 refine_s8 + big18 decoder, eval at iters_s8=3, full set:
+  **2.398 EPE, 75.16% 1px, 88.60% 3px.** This is WORSE than v2 (2.324) and far
+  worse than big18 at its normal 8 iters (2.072). The coarse-only "87.5% of the
+  gap closed" number did NOT survive end-to-end: the decoder was trained on
+  8-iteration coarse flow and degrades on the 3-iteration distilled input it
+  never saw in training. This is exactly why coarse-only numbers are not
+  deployable results -- the reviewer was right to insist. Distillation as a
+  standalone speed lever is not worth 0.33 EPE (dropping below v2) unless the
+  sparse-mode latency saving is critical AND the decoder is retrained at the
+  reduced iteration count. Control still needed: big18's OWN refine at 3 iters
+  (no distillation) to separate "distillation helped a bit" from "3 iters just
+  hurts regardless". Command queued for user.

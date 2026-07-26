@@ -51,6 +51,11 @@ def footer(s, num):
     add_text(s, 11.60, 7.02, 1.20, 0.30, str(num), 9, False, MUTED)
 
 
+def note(s, text):
+    """Attach speaker/talking notes to a slide (visible in Presenter view)."""
+    s.notes_slide.notes_text_frame.text = text
+
+
 def box(s, x, y, w, h, text, dark=False, size=10, dashed=False):
     shp = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
     shp.adjustments[0] = 0.12
@@ -405,8 +410,111 @@ def main():
              13, False, INK, line_spacing=1.2)
     footer(s, i)
 
+    # ---- Speaker / talking notes, one per slide in order ----
+    notes = [
+        # 1 · Title
+        "Opening line: NeuFlow v3 is the same v2 network everyone here already trusts, with "
+        "one part swapped. Instead of always producing a full dense flow map, it answers flow "
+        "queries at whatever points you ask for. I will show it is faster where it matters, at "
+        "least as accurate, and does two things v2 structurally cannot. Everything I show is "
+        "measured on the full validation set, not cherry-picked frames.",
+        # 2 · Motivation
+        "Set up the problem in one breath: flow tells you where each pixel goes. Every current "
+        "network computes all of it, always. But registration, tracking, and mapping only ever "
+        "use a few hundred points. On a small GPU, computing 479 thousand values to use 800 of "
+        "them is the difference between real time and not. The idea is to keep everything in v2 "
+        "that understands motion and only change how the answer is read out.",
+        # 3 · Method: v2 pipeline
+        "Walk the boxes left to right, then land on the bold line: every one of these blocks is "
+        "frozen in v3, byte for byte identical to v2. I did not retrain the part that finds "
+        "motion. The only thing I touched is the very last step, the upsampler. So any accuracy "
+        "change comes from that one swap, not from disturbing what already works.",
+        # 4 · Method: v3 decoder
+        "The key idea in plain terms: for any coordinate, sample features there, then output "
+        "blend weights over a small 3x3 neighborhood of the coarse flow plus a bilinear value. "
+        "Because it is a bounded blend, it cannot invent wild flow. And I zero-initialize it, so "
+        "before any training it reproduces plain bilinear upsampling exactly. That means training "
+        "can only improve on that starting point. Note it is one coarse pass per frame, then cheap "
+        "per-query work. And v3 is actually smaller than v2, 7.8 vs 9 million parameters.",
+        # 5 · Results: curriculum
+        "This is every configuration I tried, worst to best, left to right. Gray is my laptop, "
+        "black is the cluster. Two honest lessons are on this chart. Sequential fine-tuning, the "
+        "tall bar, made things worse: the model forgot. Mixing datasets in every batch is what "
+        "worked. The best full run, big18, is 2.07 versus v2 at 2.32, about 11 percent better. The "
+        "red line is v2. Everything from FlyingChairs onward is at or below it.",
+        # 6 · Results: precision
+        "EPE is the average, but the lab cares about sharpness, so here is accuracy at 1 and 3 "
+        "pixels. The honest story: uncG is the first version to actually beat v2 on 3-pixel "
+        "accuracy, and it closes the 1-pixel gap to under a tenth of a point, which is noise. "
+        "grandmix is the weak one here on 1px; I am not hiding that.",
+        # 7 · Results: visual comparison
+        "Same scene, same ground truth, four models. I show both the full-set EPE and this "
+        "specific scene's number under each so you can see the single scene is representative, "
+        "not cherry-picked. All three cluster checkpoints beat v2 on the full 1,174-pair set, not "
+        "just here.",
+        # 8 · Results: speed
+        "This is the slide that answers the earlier objection that 6 percent is not worth it. It "
+        "is not really about the 6 percent. On identical hardware, v2 pays 19.6 milliseconds on "
+        "every single call. v3 pays about the same once per frame, then answers every follow-up "
+        "query on that frame for 2.6 milliseconds, because it caches the expensive part. v2 has no "
+        "cached state, so it recomputes everything every time. For a planner or SLAM front-end "
+        "re-querying the same frame, that is a 7x saving.",
+        # 9 · Results: calibration
+        "This is a capability v2 simply does not have. With one extra output and a self-calibrating "
+        "loss, the model reports how much to trust each answer. This chart proves it is not noise: "
+        "sort predictions by claimed confidence and the real error rises monotonically, 0.2 up to "
+        "7.4 pixels, correlation 0.38 over 2.35 million points. A robot can use this to reject bad "
+        "correspondences before they poison a pose estimate.",
+        # 10 · Results: distillation
+        "A separate efficiency result. The refinement loop runs 8 times and is 59 percent of the "
+        "runtime, but iterations 5 through 8 barely change the answer. I retrained just that module, "
+        "using the model teaching itself with no ground truth, so 3 iterations do most of what 8 "
+        "did. Honest caveat, and it is on the record: this number is the coarse stage in isolation. "
+        "The end-to-end merged version is measured separately; do not quote this as a full-pipeline "
+        "result.",
+        # 11 · Interface: API
+        "Quick and practical. A query is one continuous coordinate; sub-pixel positions are valid. "
+        "The whole interface is two calls: infer state once, then decode queries as many times as "
+        "you want. Training used 4,096 supervision points per image, half on motion boundaries, "
+        "backbone frozen throughout everything except the distillation experiment.",
+        # 12 · Interface: GUI
+        "Live demo backup if the tool cooperates. Left, click any pixel and it returns flow "
+        "instantly. Right, motion detection pulled straight from the coarse flow at zero extra "
+        "cost. The model selector flips between v2 and v3 in place, so you can feel the difference: "
+        "v2 recomputes the whole frame on every interaction, v3 reuses the cached state.",
+        # 13 · Interface: live video
+        "Proof it runs on real, unseen footage, not just the benchmark. 40 frames of a public "
+        "YouTube highway clip, 30 FPS end to end with motion boxes. The graphs on the right were "
+        "sampled during that run; the flat GPU-memory line is the point, one cached state serves "
+        "every interaction.",
+        # 14 · Objectives
+        "Scorecard against the three goals I set. Beat v2 accuracy: done, 11 percent, and 3px now "
+        "beats v2. Less compute for the sparse case: done, verified same hardware. Do what v2 "
+        "cannot: done, arbitrary-coordinate queries and a calibrated confidence signal. I will "
+        "state plainly on the next slide what is not yet proven.",
+        # 15 · Limitations
+        "I want to be the one to raise these, not have them raised for me. The training-data "
+        "confound is only partly closed: I have not retrained v2 on the exact same mixture. The "
+        "uncertainty-head accuracy gain is a single run and could be seed noise. Every number is a "
+        "4060 or V100, never an actual Jetson. And Spring was cut off at 70 percent by the job time "
+        "limit. None of these undo the main results, but they are the honest next things to nail down.",
+        # 16 · Next steps
+        "Concrete plan. Immediate and cheap: finish Spring, run the 4K query test that only a "
+        "queryable model can even attempt, repeat the uncertainty run, retrain v2 on the mixed data "
+        "to close the confound. Then the two asks: continued cluster access for these 6-to-8-hour "
+        "jobs, and access to the lab's own AUV and UAV survey data, which is exactly the sparse, "
+        "overlapping, slow-motion setting this method is built for.",
+        # 17 · Q&A prep
+        "Not shown; my own prep. Anticipated questions with honest one-line answers: why non-integer "
+        "coordinates, whether the improvement is a data confound, why the uncertainty head helps "
+        "accuracy, fast-motion handling, and edge-device status. If I do not know, I say I do not "
+        "know and point to the limitations slide.",
+    ]
+    for slide_obj, txt in zip(p.slides, notes):
+        note(slide_obj, txt)
+
     p.save(OUT)
-    print(f'saved {OUT} with {len(p.slides._sldIdLst)} slides')
+    print(f'saved {OUT} with {len(p.slides._sldIdLst)} slides and {len(notes)} speaker notes')
 
 
 if __name__ == '__main__':
