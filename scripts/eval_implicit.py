@@ -32,7 +32,7 @@ def flow_to_color(flow, max_flow=None):
 
 
 def load_model(checkpoint_path, device):
-    model = NeuFlow(use_implicit=True).to(device)
+    model = NeuFlow(use_implicit=True, head_mode='regress').to(device)  # matches this script's pre-convex-head checkpoint default
     state_dict = torch.load(checkpoint_path, map_location=device)['model']
     model.load_state_dict(state_dict)
     model.eval()

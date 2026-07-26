@@ -152,7 +152,7 @@ if __name__ == '__main__':
     parser.add_argument('--no_implicit', action='store_true', help='Use convex upsampler (baseline)')
     parser.add_argument('--crop', type=int, nargs=2, default=None, metavar=('H', 'W'),
                         help='Center-crop images before eval, e.g. --crop 256 512')
-    parser.add_argument('--head', default='regress', choices=['regress', 'convex'],
+    parser.add_argument('--head', default='convex', choices=['regress', 'convex'],
                         help='Implicit decoder head type (must match checkpoint)')
     parser.add_argument('--pe', action='store_true', help='Checkpoint uses Fourier PE')
     parser.add_argument('--iters_s16', type=int, default=1)

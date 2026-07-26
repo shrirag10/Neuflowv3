@@ -1,4 +1,6 @@
 #!/bin/bash
+# DEPENDS ON: hpc/train_big18.sbatch finishing successfully (resumes its checkpoint).
+# Do not submit before that job completes and is verified below untrained baseline (2.476).
 #SBATCH --job-name=nf3-unfrozen
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:h200:1
@@ -20,12 +22,12 @@ mkdir -p "$CKPT_DIR"
 # diverged at batch 4 on laptop; batch 16 is the standard fix, not a guarantee.
 $PY train.py \
   --stage mix_chairs_vkitti2 \
-  --implicit --sparse_loss --unfreeze_all --lr_backbone 1e-5 \
+  --implicit --sparse_loss --head convex --unfreeze_all --lr_backbone 1e-5 \
   --num_sparse_points 4096 --adaptive_query_ratio 0.5 --no_query_jitter \
   --batch_size 16 --num_workers 8 \
   --lr 2e-4 --onecycle --gamma 0.8 \
   --train_iters_s16 2 --train_iters_s8 4 \
   --num_steps 100000 --val_freq 5000 --val_dataset none \
   --max_flow 400 \
-  --resume checkpoints/neuflowv3_rebuild/step_030000.pth --no_zero_init_decoder_head \
+  --resume /scratch/$USER/neuflow_ckpts/big18_v3dev/step_100000.pth --no_zero_init_decoder_head \
   --checkpoint_dir "$CKPT_DIR"

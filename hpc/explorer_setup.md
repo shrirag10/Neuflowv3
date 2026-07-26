@@ -41,7 +41,7 @@ backbone for every decoder training.
 
 ## What to run first (in order)
 
-1. `sbatch hpc/train_rebuild_big.sbatch` — the direct continuation of local work:
+1. `sbatch hpc/train_big18.sbatch` — the direct continuation of local work:
    rebuild recipe, batch 16 instead of 4, 100K steps instead of 30K. This tests the
    two things the laptop could not: batch size and training length.
 2. `sbatch hpc/train_unfrozen.sbatch` — unfreeze the backbone at low LR (the

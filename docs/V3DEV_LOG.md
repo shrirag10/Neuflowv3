@@ -117,3 +117,31 @@ Every entry: what changed, why, and its verification status.
   silently. Distillation (option A) is unaffected — it never uses the decoder.
   ACTION NEEDED: cancel spring (8718906) and uncG (8718908), resubmit all
   four jobs after this fix.
+
+- **Full audit after the regress-head incident (2026-07-27), everything checked:**
+  1. ROOT FIX: `NeuFlow.__init__` class default was `head_mode='regress'` — the
+     actual source of the bug, deeper than the four sbatch scripts. Flipped to
+     `'convex'`. This protects every future call site that omits the argument.
+  2. `scripts/eval_vkitti2.py --head` flag ALSO defaulted to `'regress'` — an
+     eval run without `--head convex` would have silently reported wrong
+     numbers on a correct checkpoint. Flipped to `'convex'`.
+  3. Four legacy scripts (`infer_v3.py`, `benchmark_edge.py`,
+     `demo_registration.py`, `eval_implicit.py`) hardcode pre-convex-head
+     checkpoint paths (e.g. `neuflowv3_window_phase2/step_008000.pth`) and
+     relied on the old default. Pinned explicitly to `head_mode='regress'`
+     so the class-level fix above does not silently break them.
+  4. `hpc/train_rebuild_big.sbatch` was a stale exact duplicate of
+     train_big18.sbatch (same recipe, old name, also missing --head) —
+     DELETED. Fixed two doc references (bootstrap.sh, explorer_setup.md)
+     that pointed at it.
+  5. `hpc/train_unfrozen.sbatch` had a dead --resume path
+     (checkpoints/neuflowv3_rebuild/... does not exist on this branch) AND
+     was missing --head convex. Fixed both; added an explicit DEPENDS-ON
+     comment since it now correctly resumes from train_big18's future output
+     and must not be submitted before that job finishes.
+  6. Verified: all five active hpc/train_*.sbatch scripts pass --head convex,
+     all changed .py files compile, all .sbatch files pass `bash -n`.
+  7. Confirmed NOT affected by the bug: distillation (option A) never touches
+     the decoder (only infer_coarse_state), so its verified 87.5%-gap-closed
+     result stands unchanged.
+  No further known head-mode landmines in the repository.

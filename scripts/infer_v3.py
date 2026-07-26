@@ -46,7 +46,7 @@ def fuse_conv_and_bn(conv, bn):
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 amp_enabled = device.type == 'cuda'
 
-model = NeuFlow(use_implicit=True).to(device)
+model = NeuFlow(use_implicit=True, head_mode='regress').to(device)  # matches this script's pre-convex-head checkpoint default
 state_dict = my_load_weights(checkpoint_path)
 model.load_state_dict(state_dict, strict=True)
 
