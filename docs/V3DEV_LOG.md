@@ -289,3 +289,19 @@ Every entry: what changed, why, and its verification status.
   the broader data did not hurt convergence speed. Full 100K run would need
   a resubmit with --resume from step_070000.pth and a fresh 8h clock;
   logged as a candidate follow-up, not run.
+
+- **Complete deck rebuild (2026-07-26), 17 slides, scripts/build_final_deck.py**:
+  full revamp per explicit request ("no half-baked explanation"). Linear
+  narrative: title -> motivation -> method (v2 pipeline, v3 decoder+pseudocode)
+  -> five results slides each with a dedicated matplotlib comparison plot
+  (curriculum EPE across all 8 configs, precision bars, visual grid, speed
+  bars, calibration bars, distillation bars) -> interface (API, GUI, live
+  video proof) -> objectives -> limitations (new, explicit) -> next steps ->
+  Q&A prep. Every number traced to docs/V3DEV_LOG.md, none invented.
+  scripts/make_final_plots.py generates the five plots from logged numbers
+  only (no new evals). Old scripts/build_status_deck.py (24 slides,
+  accreted over many sessions, duplicate section labels) superseded but
+  left in place for reference. Every slide individually rendered and
+  visually verified before commit -- caught and fixed two layout bugs
+  (picture-height math not matching actual PNG aspect ratios, causing four
+  captions to overlap their charts; a text-wrap issue on the requests slide).
