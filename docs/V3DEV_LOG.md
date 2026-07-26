@@ -237,3 +237,8 @@ Every entry: what changed, why, and its verification status.
   earlier "hypothesis" framing: the confidence output itself is a validated
   contribution, independent of whether it also improves the main flow output
   (that regularization question is still unproven, single run).
+
+- **Added scripts/benchmark_sparse.py** — the missing deployment-speed
+  measurement (coarse pass once + sparse decode at N queries, vs v2's per-
+  frame dense cost). CPU-smoke-tested on both the plain convex path and the
+  --uncertainty path before pushing (given two prior bugs hid exactly there).
