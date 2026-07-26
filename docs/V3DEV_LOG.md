@@ -179,3 +179,27 @@ Every entry: what changed, why, and its verification status.
   Also flipped evaluate()'s own internal default head='regress'->'convex'
   for consistency with the CLI default fixed earlier. Verified this time
   with grep + py_compile before pushing, not just py_compile alone.
+
+- **uncG full-set result: 2.082 EPE, 77.51% 1px, 90.02% 3px.** Same recipe as
+  big18 (mix_chairs_vkitti2, batch 16, 100K, iters 1/8) plus only the
+  uncertainty head+loss. First v3 checkpoint to beat v2 on 3px accuracy
+  (90.02 vs 89.8) and nearly close the 1px gap (77.51 vs 77.6, 0.09 pts).
+  HYPOTHESIS, not proven: the auxiliary uncertainty loss may be acting as a
+  regularizer on the main flow output, not just adding a confidence signal.
+  Single run — could be seed noise. Needs a repeat/ablation to confirm.
+
+  Updated full ranking (full-set, VKITTI2 Scene18+20):
+  | Config | EPE | 1px | 3px |
+  |---|---|---|---|
+  | v2 reference | 2.324 | 77.6% | 89.8% |
+  | uncG | 2.082 | 77.51% | 90.02% |
+  | big18 | 2.072 | 77.02% | 89.91% |
+  | grandmix | 2.166 | 76.25% | 89.48% |
+
+  STILL PENDING (not run, do not assume):
+  1. Sparse-query speed re-benchmark on big18/uncG/grandmix checkpoints —
+     all accuracy numbers above are DENSE mode (5.8 FPS); the deployment
+     speed claim needs its own measurement on these new weights.
+  2. Uncertainty calibration check — does uncG's predicted b actually
+     correlate with real per-point error? Not yet tested; the flow-accuracy
+     numbers above stand independent of this.
