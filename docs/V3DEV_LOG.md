@@ -242,3 +242,7 @@ Every entry: what changed, why, and its verification status.
   measurement (coarse pass once + sparse decode at N queries, vs v2's per-
   frame dense cost). CPU-smoke-tested on both the plain convex path and the
   --uncertainty path before pushing (given two prior bugs hid exactly there).
+
+- **uncG forward_dense_fast fix CONFIRMED on GPU**: 2.104 EPE, 45.7 FPS
+  (job 8732663), consistent with the stride-2 approximation class and
+  matching grandmix/big18's speed. Bug fully closed.
