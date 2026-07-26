@@ -246,3 +246,17 @@ Every entry: what changed, why, and its verification status.
 - **uncG forward_dense_fast fix CONFIRMED on GPU**: 2.104 EPE, 45.7 FPS
   (job 8732663), consistent with the stride-2 approximation class and
   matching grandmix/big18's speed. Bug fully closed.
+
+- **Sparse-speed comparison, same V100, fully verified:**
+  v2 dense: 19.6 ms (51.1 FPS), EPE 2.324 (matches known reference exactly —
+  hardware-independence sanity check passed).
+  v3 (grandmix/big18/uncG): coarse pass 16.2-16.5 ms + decode 2.6-2.7 ms
+  (flat across N=800 and N=2048) = 18.9-19.2 ms total on a fresh frame.
+
+  HONEST HEADLINE: v3's first query on a new frame is already at parity with
+  v2 (marginally faster, ~19.1 vs 19.6 ms). Every ADDITIONAL query batch on
+  the SAME frame costs only ~2.6 ms — v2 has no equivalent, since it must
+  redo its full dense pass every time (no cached state). That is a ~7.3x
+  speedup per repeat query, and it is the real deployment argument: not "6%
+  better EPE" but "v2 pays full price every call, v3 pays once per frame."
+  This directly answers the lab's original objection.
