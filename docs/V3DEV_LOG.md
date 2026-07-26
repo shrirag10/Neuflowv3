@@ -89,3 +89,15 @@ Every entry: what changed, why, and its verification status.
   Added scripts/eval_coarse.py: bilinear x8 upsample of coarse_flow_s8
   straight to full-res EPE, no decoder involved. Also correctly measures the
   actual quantity distillation targets.
+
+- **Option A result (2026-07-27, full-set, V100, coarse-flow-only eval):**
+  | iters | EPE | 1px | latency |
+  |---|---|---|---|
+  | baseline (1,3) | 2.899 | 72.27% | 11.9 ms |
+  | distilled (1,3) | 2.528 | 73.73% | 12.0 ms |
+  | baseline (1,8) target | 2.475 | 74.74% | 18.5 ms |
+  Distillation closes 87.5% of the 3-vs-8 iteration accuracy gap (0.370 of
+  0.423 px) at 3-iteration speed, zero added compute. Real win.
+  PENDING (not run): merging distilled refine_s8 weights with a trained
+  decoder into one checkpoint and evaluating the full pipeline end-to-end —
+  this coarse-only number is not yet a deployable result.
