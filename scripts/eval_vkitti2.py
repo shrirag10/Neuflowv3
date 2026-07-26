@@ -44,7 +44,8 @@ def build_vkitti2_val_pairs(root, val_scenes=None):
 
 @torch.no_grad()
 def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=True, crop=None,
-             head='regress', pe=False, iters_s16=1, iters_s8=8, fast_dense=False, stride=1):
+             head='convex', pe=False, iters_s16=1, iters_s8=8, fast_dense=False, stride=1,
+             uncertainty=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     amp_enabled = device.type == 'cuda'
 

@@ -171,3 +171,11 @@ Every entry: what changed, why, and its verification status.
   flag) because the chained one-liner never re-pulled between checkpoints.
   User error induced by my missing `git pull` step in that command. Fix:
   pull, then re-run.
+
+- **Fixed real bug in previous patch**: evaluate()'s function signature never
+  got the `uncertainty=False` parameter (the string-replace for it silently
+  no-op'd while three sibling edits succeeded) — caused
+  `TypeError: unexpected keyword argument 'uncertainty'` on the cluster.
+  Also flipped evaluate()'s own internal default head='regress'->'convex'
+  for consistency with the CLI default fixed earlier. Verified this time
+  with grep + py_compile before pushing, not just py_compile alone.
