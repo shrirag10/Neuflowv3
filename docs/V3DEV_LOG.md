@@ -203,3 +203,12 @@ Every entry: what changed, why, and its verification status.
   2. Uncertainty calibration check — does uncG's predicted b actually
      correlate with real per-point error? Not yet tested; the flow-accuracy
      numbers above stand independent of this.
+
+- **Added scripts/eval_calibration.py** for the pending uncertainty-calibration
+  check: samples valid points per image, compares predicted b against real
+  |pred-GT| error, reports Pearson correlation + 5-bin monotonicity table.
+  Caught and fixed a coordinate-offset bug before it ran anywhere: InputPadder
+  defaults to symmetric padding (mode='sintel'), so raw GT pixel coords needed
+  a +pad_left/+pad_top shift to index the padded image the model actually
+  sees — verified with a CPU smoke test (odd image size forcing real
+  asymmetric padding [3,4,7,7]; identical-frame flow ~0, b=1.0 at zero-init).
