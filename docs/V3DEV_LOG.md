@@ -325,3 +325,16 @@ Every entry: what changed, why, and its verification status.
   (2) mismatch detector verified to correctly abort on a real conflict.
   NOT yet run on real checkpoints -- needs cluster GPU for the checkpoint
   load + subsequent eval; command given to user, not run automatically.
+
+- **Fixed merge_distill_decoder.py's safety check — it was too strict.**
+  Real cluster run (distill3 + big18) aborted on ~20+ backbone
+  running_mean/running_var/num_batches_tracked differences. Diagnosis: these
+  are BatchNorm BUFFERS, which update on every forward pass in train mode
+  regardless of requires_grad -- they drift between any two training runs
+  even with a genuinely frozen backbone (the actual conv weights never
+  changed). This is expected, harmless PyTorch behavior, not a real
+  incompatibility. Fixed: the check now skips .running_mean/.running_var/
+  .num_batches_tracked suffixes, still strictly compares actual weights.
+  Re-verified with synthetic tests: BN-style drift now correctly ignored,
+  a real weight conflict still correctly aborts. Merged checkpoint inherits
+  its BN stats from --decoder (consistent with the rest of that checkpoint).
