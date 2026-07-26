@@ -145,3 +145,29 @@ Every entry: what changed, why, and its verification status.
      the decoder (only infer_coarse_state), so its verified 87.5%-gap-closed
      result stands unchanged.
   No further known head-mode landmines in the repository.
+
+- **grandmix and big18 full-set results (2026-07-26, correct convex head, verified):**
+
+  | Config | Mean EPE | 1px acc | 3px acc |
+  |---|---|---|---|
+  | NeuFlow v2 (reference) | 2.324 | 77.6% | 89.8% |
+  | Best local (mix_chairs_vkitti2, batch 4, 15K) | 2.183 | 76.4% | 89.6% |
+  | grandmix (batch 16, 100K, chairs+vkitti2+sintel) | 2.166 | 76.25% | 89.48% |
+  | **big18 (batch 16, 100K, mix_chairs_vkitti2, iters 1,8)** | **2.072** | **77.02%** | **89.91%** |
+
+  **big18 is the best result to date** — 11% better EPE than v2, 3px accuracy
+  now at parity (89.91 vs 89.8), 1px gap narrowed to 0.6 points (77.02 vs
+  77.6). Beats the local run on every metric simultaneously; scale (batch 16,
+  100K steps) was a real lever, not noise.
+  grandmix (the fair-comparison run with Sintel added) scores close to big18
+  on EPE but slightly below on 1px/3px — the extra data breadth didn't help
+  here, or 100K steps wasn't enough to fully exploit the larger mix. Both
+  results now supersede all prior local claims; deck/report update pending.
+  Dense-only runtime measured (5.8 FPS) — this is NOT the sparse-query mode;
+  full v3 sparse-vs-v2 speed comparison still needs to be re-measured on these
+  checkpoints (decode_dense_fast path untested for the (1,8)-trained weights).
+
+- **uncG eval failed**: cluster ran the old eval_vkitti2.py (no `--uncertainty`
+  flag) because the chained one-liner never re-pulled between checkpoints.
+  User error induced by my missing `git pull` step in that command. Fix:
+  pull, then re-run.
