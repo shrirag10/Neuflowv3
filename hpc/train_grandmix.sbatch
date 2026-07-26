@@ -18,7 +18,7 @@ mkdir -p "$CKPT_DIR"
 
 $PY train.py \
   --stage grand_mix \
-  --implicit --sparse_loss \
+  --implicit --sparse_loss --head convex \
   --num_sparse_points 4096 --adaptive_query_ratio 0.5 --no_query_jitter \
   --batch_size 16 --num_workers 8 \
   --lr 2e-4 --onecycle --gamma 0.8 \
