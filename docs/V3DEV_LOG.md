@@ -260,3 +260,10 @@ Every entry: what changed, why, and its verification status.
   speedup per repeat query, and it is the real deployment argument: not "6%
   better EPE" but "v2 pays full price every call, v3 pays once per frame."
   This directly answers the lab's original objection.
+
+- **Added scripts/export_panels_hpc.py**: cluster-runnable version of
+  export_panels.py, CLI-driven (--checkpoint, --tag, --uncertainty,
+  --dataset_root) so it works against /scratch/$USER paths for the new
+  HPC checkpoints (big18, uncG, grandmix). Needed since the laptop GPU is
+  currently down (driver error) and all winning checkpoints live only on
+  the cluster.
