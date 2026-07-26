@@ -80,3 +80,12 @@ Every entry: what changed, why, and its verification status.
   ~6.8 steps/s, batch 16 — ETA ~4 h for 100K steps, within the 8 h limit.
   Early epe ~7.9 during LR warm-up, expected for these mixes. Spring, distill,
   uncG submissions pending (user runs them after git pull for the NaN fix).
+
+- **Distill eval blocked, fixed with new script.** `--no_implicit` fails on
+  distill3 checkpoints: train_distill.py builds NeuFlow(use_implicit=True)
+  (only infer_coarse_state is used), so no conv_s8/upsample_s8 weights ever
+  existed to load. Correct test bypasses the decoder entirely (its weights
+  are untrained Xavier noise in this checkpoint, irrelevant to option A).
+  Added scripts/eval_coarse.py: bilinear x8 upsample of coarse_flow_s8
+  straight to full-res EPE, no decoder involved. Also correctly measures the
+  actual quantity distillation targets.
