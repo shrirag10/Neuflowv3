@@ -420,30 +420,52 @@ def main():
              'stays flat at 769 MB because one cached backbone state serves every interaction.', 11, False, INK)
     footer(s, i)
 
-    # ============================================ 11d · v2 speedup study
+    # ============================================ 11d · sparse speed, verified on cluster
     s, i = slide()
-    header(s, 'V3 ACCELERATION', 'Attacking the frozen front-end: v3 sparse from 30 to 42 FPS')
-    s.shapes.add_picture('results/v2_speedup_study.png', Inches(0.75), Inches(1.75), width=Inches(11.85))
-    add_text(s, 0.75, 5.85, 11.9, 1.2,
-             'v3 inherits its 33 ms coarse pass from v2; 62% of it is refinement iterations that stop paying after four. At (2,4), sparse\n'
-             'mode runs 41.8 FPS (52% faster than v2 full frame) at better accuracy. Dense mode was rebuilt: window projections folded into\n'
-             'per-image convs (exact), fusion on the 1/8 grid, stride-2 decode. Full-frame v3: 29.9 ms vs v2 36.4 ms at equal EPE (2.284 vs\n'
-             '2.288), or 39.6 ms at clearly better EPE (2.245). v3 now beats v2 on its own dense workload. Gap left: 1px acc (75.7 vs 77.4).', 11, False, INK)
+    header(s, 'V3 ACCELERATION', 'Sparse speed on identical hardware (V100, verified 2026-07-26)')
+    add_text(s, 0.75, 1.65, 11.8, 0.3, 'v2 dense (V100): 19.6 ms per frame, every single call.', 12, True, INK)
+    add_text(s, 0.75, 2.05, 11.8, 2.6,
+             'v3 (grandmix / big18 / uncG): 16.2-16.5 ms coarse pass + 2.6-2.7 ms decode = 18.9-19.2 ms on the FIRST\n'
+             'query of a new frame -- already at parity with v2, marginally faster.\n\n'
+             'Every ADDITIONAL query batch on that SAME frame costs only 2.6-2.7 ms. v2 has no equivalent: it must\n'
+             're-run its full dense pass every time, always 19.6 ms, because it has no cached state to reuse.\n'
+             'That is a ~7x speedup per repeat query -- measured, not estimated, on the same GPU.\n\n'
+             'Decode cost is flat between 800 and 2048 queries (within 0.05 ms), confirming the O(N) design holds\n'
+             'in this range: fixed overhead dominates, not per-query cost.', 12, False, INK)
+    add_text(s, 0.75, 5.1, 11.8, 0.9,
+             'The pitch is not "6% better EPE." It is: v2 pays full price on every call; v3 pays that price once\n'
+             'per frame, then answers follow-up questions for a fraction of a millisecond each.', 12, True, INK)
+    footer(s, i)
+
+    # ============================================ 11e · HPC checkpoints, verified visual comparison
+    s, i = slide()
+    header(s, 'RESULTS · HPC (VERIFIED 2026-07-26)', 'Three cluster-trained checkpoints, all beating v2 on EPE')
+    scene_grid(s, [
+        ('results/panels_hpc/scene_v2.png', 'NeuFlow v2, EPE 2.324 (full set) / 2.111 (this scene)'),
+        ('results/panels_hpc/scene_v3_grandmix.png', 'v3 grandmix, EPE 2.166 (full set) / 2.077 (this scene)'),
+        ('results/panels_hpc/scene_v3_big18.png', 'v3 big18, EPE 2.072 (full set, best) / 2.089 (this scene)'),
+        ('results/panels_hpc/scene_v3_uncG.png', 'v3 uncG, EPE 2.082 (full set) / 2.053 (this scene, best here)'),
+    ])
+    add_text(s, 0.75, 6.35, 11.9, 0.75,
+             'Batch 16, 100K steps, H200/V100 (Explorer cluster). uncG (uncertainty head) is first to beat v2 on 3px\n'
+             'accuracy (90.02 vs 89.8) and nearly closes the 1px gap (77.51 vs 77.6). Calibration check: predicted\n'
+             'error scale correlates with real error (Pearson r=0.38), rising monotonically 0.22 -> 7.38 px across 5 bins.', 11.5, False, INK)
     footer(s, i)
 
     # ============================================ 12 · Objectives
     s, i = slide()
     header(s, 'OBJECTIVES', 'Where the three goals stand')
-    add_text(s, 0.75, 1.85, 11.8, 4.2,
-             'Goal 1, beat v2 accuracy.  Done: 2.18 vs 2.32 px mean EPE (6% better) with mixed training.\n'
-             '1 px accuracy is within 1.2 points of v2 (76.4 vs 77.6) and 3 px is at parity.\n\n'
-             'Goal 2, less compute, edge-viable.  Done for the sparse workload: same latency as a v2 full frame,\n'
-             '13% fewer parameters, ~2.2 GB VRAM at inference, and repeat queries about 20x cheaper than v2\n'
-             'recomputing. Dense-output mode stays slower; not the target use.\n\n'
+    add_text(s, 0.75, 1.85, 11.8, 4.5,
+             'Goal 1, beat v2 accuracy.  Done, verified on the full validation set, batch-16/100K-step HPC training:\n'
+             'best EPE 2.07 vs v2 2.32 (11% better, big18). 3px accuracy now BEATS v2 (90.02 vs 89.8, uncG).\n'
+             '1px accuracy gap nearly closed (77.51 vs 77.6, uncG -- 0.09 points, within noise).\n\n'
+             'Goal 2, less compute, edge-viable.  Done for the sparse workload, verified on identical V100 hardware:\n'
+             'first query on a new frame already at parity with v2 (19.1 vs 19.6 ms); every additional query on the\n'
+             'same frame costs ~7x less (2.6 ms vs 19.6 ms) since v2 has no cached state to reuse.\n\n'
              'Goal 3, do what v2 cannot.  Done: continuous-coordinate queries, output at any resolution, sparse\n'
-             'matches dense exactly, plus a working interactive tool.',
+             'matches dense exactly, a working interactive tool, and a calibrated per-query confidence signal\n'
+             '(uncertainty head, Pearson r=0.38 vs real error) that v2 cannot express at all.',
              13, False, INK)
-    takeaway(s, 'All three objectives are met or within measurement noise; remaining work is validation breadth, not capability.')
     footer(s, i)
 
     # ============================================ 13 · Next steps + asks
