@@ -17,7 +17,7 @@ from huggingface_hub import PyTorchModelHubMixin
 class NeuFlow(torch.nn.Module,
               PyTorchModelHubMixin,
               repo_url="https://github.com/neufieldrobotics/NeuFlow_v2", license="apache-2.0", pipeline_tag="image-to-image"):
-    def __init__(self, use_implicit: bool = True, head_mode: str = 'regress', use_pe: bool = False,
+    def __init__(self, use_implicit: bool = True, head_mode: str = 'convex', use_pe: bool = False,
                  predict_uncertainty: bool = False):
         super(NeuFlow, self).__init__()
 

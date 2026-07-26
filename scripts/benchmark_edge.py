@@ -33,7 +33,7 @@ OUT_DIR      = 'results'
 # ────────────────────────────────────────────────────────────────────────────
 
 def load_model(ckpt, device):
-    model = NeuFlow(use_implicit=True).to(device)
+    model = NeuFlow(use_implicit=True, head_mode='regress').to(device)  # matches this script's pre-convex-head checkpoint default
     sd = my_load_weights(ckpt)
     model.load_state_dict(sd, strict=True)
     model.eval()

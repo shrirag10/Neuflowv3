@@ -41,4 +41,4 @@ echo
 echo "READY. Next:"
 echo "  1) upload datasets+weights from your laptop (see hpc/explorer_setup.md, ~83 GB)"
 echo "  2) verify GPU quickly:  srun --partition=gpu-interactive --gres=gpu:v100-sxm2:1 --mem=8G --time=00:10:00 --pty python3 -c 'import torch; print(torch.cuda.get_device_name(0))'"
-echo "  3) submit:              sbatch hpc/train_rebuild_big.sbatch"
+echo "  3) submit:              sbatch hpc/train_big18.sbatch"

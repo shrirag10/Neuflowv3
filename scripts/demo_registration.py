@@ -59,7 +59,7 @@ def fuse_conv_and_bn(conv, bn):
 
 
 def build_model(checkpoint, device, amp):
-    model = NeuFlow(use_implicit=True).to(device)
+    model = NeuFlow(use_implicit=True, head_mode='regress').to(device)  # matches this script's pre-convex-head checkpoint default
     # Pre-window checkpoints lack win_proj_* keys; __init__ already center-inits
     # them (equivalent to point-sampling), so strict=False reproduces them faithfully.
     missing, unexpected = model.load_state_dict(my_load_weights(checkpoint), strict=False)
