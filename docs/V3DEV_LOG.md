@@ -314,3 +314,14 @@ Every entry: what changed, why, and its verification status.
   the two-pass API, HPC training/eval commands, and an updated file layout.
   Fixed three markdown-lint warnings (blank lines around lists, code-fence
   language) before committing.
+
+- **Added scripts/merge_distill_decoder.py**, the tool for the pending
+  end-to-end distillation eval. Splices distill3's refine_s8 weights into
+  a checkpoint with a trained decoder (big18/uncG), with a hard safety
+  check: if any weight OUTSIDE refine_s8/decoder differs between the two
+  source checkpoints, it aborts rather than silently merging incompatible
+  models. Smoke-tested locally with synthetic checkpoints: (1) correct
+  splice verified (right tensors from right source, shared parts preserved),
+  (2) mismatch detector verified to correctly abort on a real conflict.
+  NOT yet run on real checkpoints -- needs cluster GPU for the checkpoint
+  load + subsequent eval; command given to user, not run automatically.
