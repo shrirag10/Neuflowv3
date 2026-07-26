@@ -280,3 +280,12 @@ Every entry: what changed, why, and its verification status.
     beats v2, 1px gap nearly closed, ~7x repeat-query speedup (was an
     unverified 20x estimate). Removed the takeaway() line per earlier
     instruction to drop that pattern.
+
+- **Spring result (truncated at step 70,000/100,000, killed by 8h wall as
+  predicted): 2.080 EPE, 76.94% 1px, 89.88% 3px.** Trained on the hardest,
+  broadest mix (chairs+vkitti2+sintel+spring, 55,294 pairs) and still landed
+  within 0.01 EPE of big18/uncG despite only 70% of planned steps and never
+  reaching the OneCycle LR's final anneal. Genuinely strong, not a fluke --
+  the broader data did not hurt convergence speed. Full 100K run would need
+  a resubmit with --resume from step_070000.pth and a fresh 8h clock;
+  logged as a candidate follow-up, not run.
