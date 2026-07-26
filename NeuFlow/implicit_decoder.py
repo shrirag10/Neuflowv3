@@ -337,9 +337,13 @@ class ImplicitFlowDecoder(nn.Module):
             win_flow[..., 0] = win_flow[..., 0] * (W_full / W8)
             win_flow[..., 1] = win_flow[..., 1] * (H_full / H8)
             candidates = torch.cat([win_flow, coarse_at_q.float().unsqueeze(2)], dim=2)
-            logits = self.convex_head(mlp_in).float() + self.convex_prior
+            head_out = self.convex_head(mlp_in).float()
+            k2p1 = self.window_size ** 2 + 1
+            logits = head_out[..., :k2p1] + self.convex_prior
             weights = torch.softmax(logits, dim=-1)
             flow = (weights.unsqueeze(-1) * candidates).sum(dim=2)
+            if self.predict_uncertainty:
+                self.last_b = torch.exp(head_out[..., k2p1].clamp(-6.0, 6.0))
         else:
             delta = self.flow_head(mlp_in).clone().float()
             delta[..., 0] = delta[..., 0] * W_full

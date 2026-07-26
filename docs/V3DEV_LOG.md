@@ -212,3 +212,28 @@ Every entry: what changed, why, and its verification status.
   a +pad_left/+pad_top shift to index the padded image the model actually
   sees — verified with a CPU smoke test (odd image size forcing real
   asymmetric padding [3,4,7,7]; identical-frame flow ~0, b=1.0 at zero-init).
+
+- **uncG speed check crashed on a second missed code path.** forward_dense_fast
+  (used only by --fast_dense) was never updated for the extra uncertainty
+  channel — only the regular decode() path was patched earlier. Fixed with
+  the same k2p1 slicing + last_b population. Verified two ways before
+  pushing: (1) exact mode (fusion_on_grid=False) matches the trusted regular
+  path exactly, 0.000000 diff on both flow and b; (2) the default fast mode
+  (fusion_on_grid=True) shows the already-documented ~0.02px-EPE-class
+  approximation, which is expected and unrelated to this fix — it just shows
+  up more visibly on the unbounded uncertainty channel than on the
+  softmax-normalized flow.
+
+- **Speed results confirmed (grandmix, big18, fast_dense stride=2, V100):**
+  both ~45.6-45.8 FPS dense (vs v2's 5.8 FPS in the same harness — ~7.9x),
+  EPE within 0.02 of the slow-path numbers as expected from the documented
+  approximation. Sparse-query mode (the actual deployment case) still not
+  re-measured on these checkpoints — only dense-fast has been checked so far.
+
+- **Calibration VERIFIED (uncG): Pearson r=0.38, clean monotonic bins**
+  (0.22 -> 0.33 -> 0.60 -> 1.41 -> 7.38 px real error as predicted b rises
+  across 5 bins, 2.35M sample points). The uncertainty head is not noise —
+  it carries real, usable signal about its own error. This upgrades the
+  earlier "hypothesis" framing: the confidence output itself is a validated
+  contribution, independent of whether it also improves the main flow output
+  (that regularization question is still unproven, single run).
