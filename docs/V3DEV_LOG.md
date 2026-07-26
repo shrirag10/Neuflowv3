@@ -101,3 +101,19 @@ Every entry: what changed, why, and its verification status.
   PENDING (not run): merging distilled refine_s8 weights with a trained
   decoder into one checkpoint and evaluating the full pipeline end-to-end —
   this coarse-only number is not yet a deployable result.
+
+- **CRITICAL BUG FOUND: grandmix and big18's 6-hour full runs used the broken
+  `regress` head.** Neither hpc/train_*.sbatch script passed `--head`, and
+  train.py's default was `--head regress` — the head proven back on 2026-07-09
+  to never train below its own initialization. Verified on the actual
+  checkpoint: grandmix/step_100000.pth scores 2.584 EPE, WORSE than the
+  untrained baseline (2.476). Both 100K-step runs are void for decoder
+  purposes; backbone/refine weights are unaffected (frozen throughout, so
+  not corrupted, just unused for six hours).
+  spring (running, 47%) and uncertainty (just started) had the identical bug
+  and were caught before wasting comparable time.
+  FIXED: added `--head convex` to all four hpc/train_*.sbatch scripts, and
+  changed train.py's default from `regress` to `convex` so this cannot recur
+  silently. Distillation (option A) is unaffected — it never uses the decoder.
+  ACTION NEEDED: cancel spring (8718906) and uncG (8718908), resubmit all
+  four jobs after this fix.

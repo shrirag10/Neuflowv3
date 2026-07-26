@@ -66,7 +66,7 @@ def get_args_parser():
     # model mode
     parser.add_argument('--implicit', action='store_true',
                         help='Use implicit decoder instead of convex upsampler')
-    parser.add_argument('--head', default='regress', choices=['regress', 'convex'],
+    parser.add_argument('--head', default='convex', choices=['regress', 'convex'],
                         help='Implicit decoder head: direct delta regression or AnyFlow-style convex weights')
     parser.add_argument('--pe', action='store_true',
                         help='Fourier positional encoding of the sub-cell query offset')
