@@ -396,3 +396,51 @@ Every entry: what changed, why, and its verification status.
   the figure (clean bars vs hatched/red "INVALID" panel) and the tables, keeps
   the speed and uncertainty sections with their own caveats, and lists the
   repeat-the-runs work as step 1. Figures via `scripts/make_report_figs.py`.
+
+## 2026-07-26 -- Full critical audit (docs/AUDIT_2026-07-26.md)
+
+Line-by-line review of algorithm + training. Verified correct: conv
+reformulation (proved algebraically, cross-correlation orientation and
+replicate-padding both match), convex-head boundedness, zero-init==bilinear,
+Laplace NLL, gradient freezing (0 weights changed), exact GT sampling under
+--no_query_jitter, RAFT-style multi-scale weighting.
+
+**Bug 2: the "frozen" backbone is not frozen.** my_freeze_model only sets
+requires_grad=False; BN buffers update every forward in train mode.
+Measured: running_mean drift 7.4%, running_var 17.4%, num_batches_tracked
++30,000 (exactly one per step). Restoring only the BN buffers and re-running
+the coarse pass changes the coarse flow by **0.350 px mean / 5.86 px max --
+7x the entire 0.049 px v3-vs-v2 gap.** So v3's front end != v2's front end;
+part of v3's apparent advantage may be silent BN domain adaptation.
+
+**I was wrong earlier**: I dismissed the merge script's BN abort as "harmless".
+It was not -- distill3's refine_s8 was tuned under its own drifted BN stats and
+was spliced onto big18's, so the 2.398 end-to-end number is pessimistic for a
+reason I introduced.
+
+**Bug 3: the decoder never sees the full-resolution image.** `img` is passed to
+ImplicitFlowDecoder.forward and used ONLY for `.device`.
+
+**Ceiling analysis (the key result).** Chairs checkpoint, Scene18 crop:
+bilinear 1.540 / trained head 1.497 / oracle-best-of-its-own-10-candidates
+0.881. The head captures ~6% of the headroom its own architecture allows.
+My saturation hypothesis was REFUTED by measurement (learned logit std 3.69,
+mean bilinear weight 0.083 -- it escaped the prior entirely and chooses
+confidently, just badly). Real cause is an information bottleneck: within-8x8-
+cell share of total variance is 23.3% for the head's evidence but 63.4% for the
+oracle's correct choice, and 96.9% of cells need different candidates for
+different pixels inside them. v2's upsampler is fed conv_s8(img0) -- a k=8,s=8
+conv on the RAW full-res image -- and emits 8^2*9=576 values per cell, i.e. a
+separate 9-way weighting per sub-pixel conditioned on real high-frequency
+content. v3's queryable decoder is strictly LESS informed for the sub-pixel
+decision than the fixed upsampler it replaced. This one fact explains the 1px
+gap, the PE null result, and the distillation failure simultaneously.
+
+**Ranked fixes**: (A) feed a full-res stem sampled at the query coordinate --
+plumbing already exists, targets the exact failing metric; (B) fix the BN freeze
+and re-run; (C) bounded residual on top of the convex blend to break the hull
+ceiling without returning to unbounded regression; (D) 5x5 window; (E) boundary-
+weighted loss; (F) remove the fusion train/eval mismatch.
+**Unfreezing v2 is NOT the first lever** -- the bottleneck is information, not
+capacity, and an 8x-downsampled map cannot carry 64 distinct sub-pixel decisions
+per cell. A full-res stem supplies the same signal at the cost v2 already pays.
