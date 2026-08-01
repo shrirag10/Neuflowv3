@@ -369,6 +369,16 @@ class NeuSim(FlowDataset):
                 self.flow_list += [bw_flows[i]]
 
 
+# Canonical VKITTI2 split. Scene18 and Scene20 are the EVALUATION scenes
+# (scripts/eval_vkitti2.py defaults to exactly these). They must never appear
+# in a training stage -- doing so trains on the test set.
+# Regression discovered 2026-07-26: every VKITTI2 training stage was using the
+# loader default, which included Scene18+Scene20, so 100% of the 1,174
+# validation pairs were also training pairs. See docs/V3DEV_LOG.md.
+VKITTI2_TRAIN_SCENES = ['Scene01', 'Scene02', 'Scene06']
+VKITTI2_VAL_SCENES = ['Scene18', 'Scene20']
+
+
 class VKITTI2(FlowDataset):
     """Virtual KITTI 2 dataset for optical flow.
 
@@ -392,11 +402,23 @@ class VKITTI2(FlowDataset):
         root='datasets/vkitti2',
         scenes=None,
         variants=None,
+        allow_val_scenes=False,
     ):
         super(VKITTI2, self).__init__(aug_params, sparse=True, virtual=True)
 
         if scenes is None:
-            scenes = ['Scene01', 'Scene02', 'Scene06', 'Scene18', 'Scene20']
+            # Train-safe default: eval scenes excluded. Pass scenes=... with
+            # allow_val_scenes=True to deliberately include them.
+            scenes = list(VKITTI2_TRAIN_SCENES)
+        if not allow_val_scenes:
+            leaked = [sc for sc in scenes if sc in VKITTI2_VAL_SCENES]
+            if leaked:
+                raise ValueError(
+                    f'VKITTI2: refusing to build a dataset containing evaluation '
+                    f'scenes {leaked}. These are held out for eval '
+                    f'(scripts/eval_vkitti2.py). Pass allow_val_scenes=True only '
+                    f'if you genuinely intend to train on the test set.'
+                )
         if variants is None:
             variants = ['clone']
 

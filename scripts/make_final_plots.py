@@ -142,22 +142,25 @@ plt.close()
 print(f'{OUT}/calibration_bars.png')
 
 # ---------------------------------------------------------------- Plot E
-# Distillation: baseline-3iter vs distilled-3iter vs baseline-8iter (coarse-only, decoder-independent)
-dist_labels = ['Baseline\n3 iterations', 'Distilled\n3 iterations', 'Baseline\n8 iterations\n(target)']
-dist_epe = [2.899, 2.528, 2.475]
+# Distillation, END-TO-END (full pipeline, big18 decoder). The honest test:
+# coarse-only closed 87.5% of the gap, but end-to-end it is only 27%.
+dist_labels = ['3 iters\n(no distillation)', '3 iters\n(distilled)', '8 iters\n(full, target)']
+dist_epe = [2.520, 2.398, 2.072]
 dist_colors = ['#b03030', INK, '#999999']
 
-fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
+fig, ax = plt.subplots(figsize=(8.5, 5), dpi=150)
 bars = ax.bar(dist_labels, dist_epe, color=dist_colors, width=0.55, zorder=3)
 for bar, v in zip(bars, dist_epe):
     ax.text(bar.get_x() + bar.get_width()/2, v + 0.02, f'{v:.3f}', ha='center', fontsize=10.5, color=INK, fontweight='bold')
-ax.annotate('closes 87.5% of the\n3-vs-8 iteration gap\nat 3-iteration speed',
-            xy=(1, 2.528), xytext=(1.05, 2.72),
+ax.axhline(V2_EPE, color='#b03030', linestyle='--', linewidth=1.3, zorder=2)
+ax.text(2.4, V2_EPE + 0.01, f'v2: {V2_EPE:.3f}', color='#b03030', fontsize=9, ha='right', va='bottom')
+ax.annotate('distillation closes only 27%\nof the gap end-to-end\n(coarse-only test claimed 87.5%)',
+            xy=(1, 2.398), xytext=(1.1, 2.5),
             fontsize=9.5, color=INK, ha='left',
             arrowprops=dict(arrowstyle='->', color=INK, lw=1))
-ax.set_ylabel('Mean end-point error, px (coarse flow only)')
-ax.set_title('Refinement self-distillation: same speed, most of the accuracy', loc='left', fontsize=12.5, fontweight='bold')
-ax.set_ylim(2.3, 3.0)
+ax.set_ylabel('Mean end-point error, px (full pipeline, end-to-end)')
+ax.set_title('Refinement self-distillation: the honest end-to-end result', loc='left', fontsize=12.5, fontweight='bold')
+ax.set_ylim(2.0, 2.65)
 plt.tight_layout()
 plt.savefig(f'{OUT}/distillation_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
