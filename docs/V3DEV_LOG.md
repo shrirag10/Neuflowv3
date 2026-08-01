@@ -444,3 +444,52 @@ weighted loss; (F) remove the fusion train/eval mismatch.
 **Unfreezing v2 is NOT the first lever** -- the bottleneck is information, not
 capacity, and an 8x-downsampled map cannot carry 64 distinct sub-pixel decisions
 per cell. A full-res stem supplies the same signal at the cost v2 already pays.
+
+## 2026-07-26 -- Adaptive (region-selective) refinement: measured, it works
+
+User's idea: instead of cropping, use a cheap signal after N iterations to find
+where more refinement is needed, and only spend iterations there.
+
+**Methodology error caught mid-experiment.** The first probe used a 256x512
+corner crop and 2-3 pairs. On that crop iterations 5-8 changed EPE by ~0.01 px
+and the SIGN flipped between samples, so the "% of gain" denominator went
+negative and every percentage printed was garbage. Cause: the crop is sky and
+trees, easy content where refinement does nothing. Rewritten to use full frames
+via InputPadder over 24 pairs. Sanity check now passes: the probe measures the
+iter4->8 gain as +0.2284 px, matching the independent full-set sweep
+(4 iters 2.526 vs 8 iters 2.288 = 0.238 px). The probe was separately verified
+to reproduce infer_coarse_state exactly (max diff 0.000e+00).
+
+**Measured (24 full frames, Scene18+20, coarse flow + bilinear x8):**
+- Concentration: top 5% of pixels carry 65.9% of the iter4->8 change,
+  top 10% carry 77.2%, top 20% carry 86.8%.
+- Predictor: |flow_4 - flow_3| ("not yet converged", free -- both already
+  computed) r = 0.924 +/- 0.087. Flow magnitude, which was the user's original
+  suggestion, is much weaker at r = 0.675; flow gradient r = 0.702.
+- Budget (16x16 s8 tiles, selected by the not-converged signal):
+  top 10% -> EPE 2.8618 (76.6% of the gain), top 20% -> 2.8112 (98.8%),
+  vs 3.0368 stopping at iter 4 and 2.8084 with all 8.
+
+**The blocker, and its fix.** refine_s8 is 8 stacked 3x3 convs -> receptive
+field radius 8 s8-cells, so an exact 16x16 tile must compute 32x32 (4x
+overhead), which eats the savings. Measured the actual decay by recomputing one
+tile in isolation at varying halo:
+  halo 8 -> 0.0000 px err (exact, 4.0x) | halo 6 -> 0.0065 px (3.1x)
+  halo 4 -> 0.0305 px (2.2x) | halo 2 -> 0.0705 px (1.6x) | halo 0 -> 0.181 px
+So halo 4-6 is effectively exact at roughly half the overhead of the strict
+receptive field.
+
+**Resulting estimate (T=16, halo 4):** refine top 20% of tiles -> ~16% total
+speedup at ~99% of the refinement gain; top 10% -> ~23% speedup at 77% of the
+gain (0.05 px cost). This meets the 15-20% target the user asked for.
+
+**Caveats, explicitly:** (a) the speedups are ARITHMETIC from measured
+components, not a wall-clock of an implemented tiled path -- gather/scatter and
+occupancy will reduce them; (b) 24 frames on CPU, needs the full 1,174-frame GPU
+run; (c) the probe evaluated coarse+bilinear, NOT the decoder, so end-to-end
+verification is still required; (d) the halo decay is one tile in one image;
+(e) **this optimization applies to NeuFlow v2 as well -- it is not a v3
+feature.** The v3-specific variant is to intersect the not-converged mask with
+the tiles that actually contain queries, which only pays off for clustered /
+region-of-interest queries (800 uniformly spread queries touch essentially all
+27 tiles at T=16).
