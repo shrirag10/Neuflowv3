@@ -275,12 +275,13 @@ def main():
 
     # ============================================ 10 · Results: distillation
     s, i = slide()
-    header(s, 'RESULTS', 'Option A: refinement self-distillation')
+    header(s, 'RESULTS', 'Option A: refinement self-distillation (a negative result, reported)')
     s.shapes.add_picture('results/plots/distillation_bars.png', Inches(3.0), Inches(1.5), width=Inches(7.3))
     add_text(s, 0.75, 6.15, 11.8, 0.9,
-             'The 8-iteration refinement loop is 59% of pipeline runtime; iterations 5-8 barely change\n'
-             'the answer. Retrained ONLY the refinement module (teacher = the model itself, no ground\n'
-             'truth) so 3 iterations approach 8-iteration quality at 3-iteration cost. Decoder untouched.', 11.5, False, INK)
+             'Retrained only the refinement module (teacher = the model itself, no ground truth) so 3\n'
+             'iterations approach 8. In isolation it closed 87.5% of the gap -- but end-to-end, through\n'
+             'the real decoder, only 27%, and the result (2.398) lands below v2. Kept as a documented\n'
+             'negative: an isolated-component win does not imply a deployable one.', 11.5, False, INK)
     footer(s, i)
 
     # ============================================ 11 · Interface: how to query
@@ -466,12 +467,14 @@ def main():
         "7.4 pixels, correlation 0.38 over 2.35 million points. A robot can use this to reject bad "
         "correspondences before they poison a pose estimate.",
         # 10 · Results: distillation
-        "A separate efficiency result. The refinement loop runs 8 times and is 59 percent of the "
-        "runtime, but iterations 5 through 8 barely change the answer. I retrained just that module, "
-        "using the model teaching itself with no ground truth, so 3 iterations do most of what 8 "
-        "did. Honest caveat, and it is on the record: this number is the coarse stage in isolation. "
-        "The end-to-end merged version is measured separately; do not quote this as a full-pipeline "
-        "result.",
+        "I am showing this because it is a negative result and I would rather present it than bury "
+        "it. The refinement loop is 59 percent of runtime, so I retrained just that module to do in "
+        "3 iterations what it did in 8, the model teaching itself with no ground truth. Measured in "
+        "isolation it looked great, 87.5 percent of the gap closed. But when I actually merged it "
+        "into the full pipeline and measured end to end, only 27 percent held, and it lands below "
+        "v2 at 2.40. The lesson: a component win measured in isolation is not a deployable win. It "
+        "only becomes worth pursuing if the decoder is retrained at the reduced iteration count, "
+        "which I have not done.",
         # 11 · Interface: API
         "Quick and practical. A query is one continuous coordinate; sub-pixel positions are valid. "
         "The whole interface is two calls: infer state once, then decode queries as many times as "

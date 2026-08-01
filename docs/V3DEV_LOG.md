@@ -356,3 +356,43 @@ Every entry: what changed, why, and its verification status.
   reduced iteration count. Control still needed: big18's OWN refine at 3 iters
   (no distillation) to separate "distillation helped a bit" from "3 iters just
   hurts regardless". Command queued for user.
+
+## 2026-07-26 -- CRITICAL: train/validation leak found and fixed
+
+- **Every VKITTI2 training stage was training on the evaluation scenes.**
+  `VKITTI2.__init__` defaulted to
+  `scenes=['Scene01','Scene02','Scene06','Scene18','Scene20']`, and NO call
+  site ever passed `scenes=` (verified: the token appears only in the class
+  signature). `eval_vkitti2.py` defaults to `['Scene18','Scene20']`, `clone`
+  variant -- which the training stages also included.
+  **Proved by exact file-path intersection: 1,174 / 1,174 validation pairs
+  (100%) were also training pairs.**
+
+- **Invalidated results** (all trained on a VKITTI2-containing stage, all
+  evaluated on Scene18/20): big18 2.072, uncG 2.082, spring-70K 2.080,
+  grandmix 2.166, laptop-mixed 2.183, vkitti2_all 2.388, plus the distillation
+  end-to-end evals (both sides equally contaminated, so the *relative*
+  27%-vs-87.5% conclusion likely survives; absolute numbers do not).
+  The "v3 beats v2 by 11%" headline was train-on-test vs honest-holdout.
+
+- **Results that SURVIVE** (no VKITTI2 in training, or leak-independent):
+  v2 2.324 (trained FlyingThings, never saw VKITTI2); v3 chairs-only 2.275;
+  v3 chairs+PE 2.288; v3 untrained 2.476; the FlyingChairs-val comparison
+  (proper split file: v2 2.238 / v3 2.399); ALL speed and latency numbers
+  (timing is unaffected by data contamination); sparse==dense exactness.
+  **The clean headline is chairs-only 2.275 vs v2 2.324 -- genuinely better,
+  with zero driving imagery in training.**
+
+- **Fix** (`data_utils/datasets.py`): module-level `VKITTI2_TRAIN_SCENES` /
+  `VKITTI2_VAL_SCENES`; the loader default is now train-safe (Scene01/02/06);
+  and an `allow_val_scenes=False` guard RAISES if any eval scene is requested,
+  so this cannot silently recur. Verified post-fix: mix_chairs_vkitti2
+  34,958->27,914 pairs, vkitti2_all 12,726->5,682, vkitti2 2,121->947, all
+  with overlap=0; guard fires on a leaking request; explicit opt-in still works
+  for eval tooling.
+
+- **Written up in `docs/report/NeuFlow_v3_report.tex` -> .pdf** (5 pages):
+  leads with the correction, separates valid from invalidated results in both
+  the figure (clean bars vs hatched/red "INVALID" panel) and the tables, keeps
+  the speed and uncertainty sections with their own caveats, and lists the
+  repeat-the-runs work as step 1. Figures via `scripts/make_report_figs.py`.
