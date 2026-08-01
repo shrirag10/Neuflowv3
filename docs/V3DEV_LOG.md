@@ -493,3 +493,41 @@ feature.** The v3-specific variant is to intersect the not-converged mask with
 the tiles that actually contain queries, which only pays off for clustered /
 region-of-interest queries (800 uniformly spread queries touch essentially all
 27 tiles at T=16).
+
+## 2026-07-26 -- Pre-retraining audit of the training path
+
+**Fixed: BatchNorm freeze (utils/load_model.set_frozen_bn_eval).** Wired into
+train.py and scripts/train_distill.py. Verified: before, 15 BN counters moved
+and running_mean drifted 2.99 in 3 steps; after, 0 counters move and drift is
+exactly 0.
+
+**Found: the four HPC runs were not comparable to each other.** They differed in
+THREE variables at once, not one:
+  spring       spring_mix           batch 12   iters (2,4)
+  grandmix     grand_mix            batch 16   iters (2,4)
+  big18        mix_chairs_vkitti2   batch 16   iters (1,8)
+  uncertainty  mix_chairs_vkitti2   batch 16   iters (1,8)
+All four were evaluated at (1,8), so grandmix and spring additionally had a
+train/eval schedule mismatch. The grandmix-vs-big18 difference (2.166 vs 2.072)
+that I had attributed to the dataset is at least as likely to be that mismatch.
+No dataset conclusion from those runs is safe.
+
+**Fix:** all sbatch files are now generated from hpc/_template.sbatch by
+hpc/make_sbatch.py, so runs cannot silently drift apart. Every run is identical
+(seed 1234, batch 16, lr 2e-4 OneCycle, gamma 0.8, iters 1xs16+8xs8 matching the
+eval default, 4096 queries, no jitter, convex head) and varies in exactly one
+thing. Old hand-written scripts moved to hpc/old/.
+
+**Added --seed** (default 1234); the seeding block in train.py was commented out,
+so previous runs were unseeded and their differences included seed noise.
+
+**Renamed runs to the real dataset names** per user request, and added
+STAGE_ALIASES so stages can be given as e.g. 'FlyingChairs+VKITTI2+Sintel':
+  v3_FlyingChairs, v3_FlyingChairs_VKITTI2, v3_FlyingChairs_VKITTI2_Sintel,
+  v3_FlyingChairs_VKITTI2_Sintel_Spring, v3_FlyingChairs_VKITTI2_Sintel_uncertainty
+
+**Made the training path CPU-testable** (fp16 cast, init_bhwd amp flag and
+autocast now keyed off device type; GPU behaviour unchanged). The whole loop can
+now be smoke-tested without a GPU before spending cluster hours -- verified with
+a 3-step run: seed printed, 27,914 leak-free pairs, 15 BN layers held in eval,
+745,226 / 7,826,794 params trainable.

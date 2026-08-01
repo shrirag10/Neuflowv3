@@ -440,7 +440,22 @@ class VKITTI2(FlowDataset):
                         self.flow_list += [flows[i]]
 
 
+# Stage aliases using real dataset names. The short names are kept so older
+# scripts and checkpoints stay reproducible.
+STAGE_ALIASES = {
+    'FlyingChairs':                          'chairs',
+    'FlyingThings3D':                        'things',
+    'MPI-Sintel':                            'sintel',
+    'VKITTI2':                               'vkitti2',
+    'VKITTI2-all-variants':                  'vkitti2_all',
+    'FlyingChairs+VKITTI2':                  'mix_chairs_vkitti2',
+    'FlyingChairs+VKITTI2+Sintel':           'grand_mix',
+    'FlyingChairs+VKITTI2+Sintel+Spring':    'spring_mix',
+}
+
+
 def build_train_dataset(stage):
+    stage = STAGE_ALIASES.get(stage, stage)
     if stage == 'chairs':
         aug_params = {'crop_size': (384, 512), 'min_scale': -0.1, 'max_scale': 1.0, 'do_flip': True}
 

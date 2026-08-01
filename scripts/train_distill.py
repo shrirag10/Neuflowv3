@@ -26,7 +26,7 @@ from tqdm import tqdm
 
 from data_utils.datasets import build_train_dataset
 from NeuFlow.neuflow import NeuFlow
-from utils.load_model import my_load_weights, load_with_new_keys
+from utils.load_model import my_load_weights, load_with_new_keys, set_frozen_bn_eval
 
 
 def main():
@@ -94,6 +94,9 @@ def main():
                     t_flow = teacher.infer_coarse_state(
                         img1, img2, iters_s16=1, iters_s8=args.teacher_iters)['coarse_flow_s8']
                 model.train()
+                # keep frozen BN statistics fixed; otherwise the student's
+                # backbone drifts away from the teacher's during distillation
+                set_frozen_bn_eval(model)
                 s_flow = model.infer_coarse_state(
                     img1, img2, iters_s16=1, iters_s8=args.student_iters)['coarse_flow_s8']
                 loss = (s_flow.float() - t_flow.float()).abs().mean()
