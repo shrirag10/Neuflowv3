@@ -17,6 +17,7 @@ from utils.load_model import (
     load_with_new_keys,
     my_freeze_model,
     my_load_weights,
+    set_frozen_bn_eval,
 )
 from utils.dist_utils import get_dist_info, init_dist, setup_for_distributed
 
@@ -40,6 +41,8 @@ def get_args_parser():
     parser.add_argument('--num_steps', default=1000000, type=int)
 
     parser.add_argument('--max_flow', default=400, type=int)
+    parser.add_argument('--seed', default=1234, type=int,
+                        help='RNG seed; runs being compared must share it')
 
     # base training parameters (paper-aligned defaults: RAFT/NeuFlow-v2 recipe)
     parser.add_argument('--gamma', default=0.8, type=float,
@@ -89,11 +92,14 @@ def get_args_parser():
 def main(args):
     # torch.autograd.set_detect_anomaly(True)
     print('Use %d GPUs' % torch.cuda.device_count())
-    # seed = args.seed
-    # torch.manual_seed(seed)
-    # np.random.seed(seed)
-    # torch.cuda.manual_seed_all(seed)
-    # torch.backends.cudnn.deterministic = True
+    # Runs that are compared against each other must share a seed, otherwise
+    # differences between them include seed noise.
+    import random, numpy as _np
+    torch.manual_seed(args.seed)
+    _np.random.seed(args.seed)
+    random.seed(args.seed)
+    torch.cuda.manual_seed_all(args.seed)
+    print(f'seed: {args.seed}')
 
     torch.backends.cudnn.benchmark = True
 
@@ -233,6 +239,12 @@ def main(args):
 
     while total_steps < args.num_steps:
         model.train()
+        # BatchNorm ignores requires_grad and updates running stats in train
+        # mode. Without this the "frozen" backbone drifts (measured: 0.35 px of
+        # coarse flow over 30K steps) and v3 no longer shares v2's front end.
+        _nbn = set_frozen_bn_eval(model_without_ddp)
+        if total_steps == 0:
+            print(f'BatchNorm layers held in eval (frozen modules): {_nbn}')
 
         # mannual change random seed for shuffling every epoch
         if args.distributed:
@@ -246,12 +258,17 @@ def main(args):
 
             img1, img2, flow_gt, valid = [x.to(device) for x in sample]
 
-            img1 = img1.half()
-            img2 = img2.half()
+            # fp16 inputs pair with CUDA autocast; on CPU autocast is off, so
+            # keep float32 there. Lets the whole training path be smoke-tested
+            # without a GPU before spending cluster hours. GPU path unchanged.
+            if device.type == 'cuda':
+                img1 = img1.half()
+                img2 = img2.half()
 
-            model_without_ddp.init_bhwd(img1.shape[0], img1.shape[-2], img1.shape[-1], device)
+            model_without_ddp.init_bhwd(img1.shape[0], img1.shape[-2], img1.shape[-1], device,
+                                        amp=(device.type == 'cuda'))
 
-            with torch.amp.autocast('cuda', enabled=True):
+            with torch.amp.autocast('cuda', enabled=(device.type == 'cuda')):
 
                 # --- Sparse implicit training: sample coords BEFORE forward ---
                 if args.implicit and args.sparse_loss:

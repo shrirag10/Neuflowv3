@@ -38,6 +38,28 @@ def my_load_weights(weight_path):
     return state_dict
 
 
+def set_frozen_bn_eval(model):
+    """Put BatchNorm layers of frozen modules into eval mode.
+
+    BatchNorm updates running_mean/running_var on EVERY forward pass in train
+    mode, regardless of requires_grad. Without this call a "frozen" backbone is
+    not frozen at inference time: measured drift over 30K steps was 7.4% on
+    running_mean and 17.4% on running_var, which changed the coarse flow by
+    0.350 px mean -- roughly 7x the v3-vs-v2 EPE difference being studied.
+
+    Returns the number of BN layers switched to eval.
+    """
+    n = 0
+    for m in model.modules():
+        if isinstance(m, torch.nn.modules.batchnorm._BatchNorm):
+            params = list(m.parameters(recurse=False))
+            frozen = (len(params) > 0 and not any(p.requires_grad for p in params))
+            if frozen:
+                m.eval()
+                n += 1
+    return n
+
+
 def my_freeze_model(model):
     for name, param in model.named_parameters():
         # Works for both single-GPU names (implicit_decoder_module.*)
