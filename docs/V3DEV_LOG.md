@@ -531,3 +531,33 @@ autocast now keyed off device type; GPU behaviour unchanged). The whole loop can
 now be smoke-tested without a GPU before spending cluster hours -- verified with
 a 3-step run: seed printed, 27,914 leak-free pairs, 15 BN layers held in eval,
 745,226 / 7,826,794 params trainable.
+
+### Pre-flight verification suite (scripts/verify_pipeline.py)
+
+Written in response to "are you sure of what you have done" -- 9 checks, CPU,
+~2 min, run before spending cluster hours. All 9 pass. Notable:
+
+- BatchNorm frozen: 15 layers held, drift exactly 0
+- only decoder trainable: 30 tensors, 0 outside implicit_decoder_module
+- zero-init decoder == bilinear: 0.0110 px max deviation
+- sparse query == dense at same coords: 0.000473 px
+- seed reproducibility: same seed -> identical loss (5.114 == 5.114);
+  different seed -> different (16.322). Confirms --seed works.
+
+Two checks failed on the first run, BOTH because the test was wrong, not the
+code -- worth recording because the second one nearly produced a false alarm:
+
+1. Uncertainty: the test ignored the documented API. decode_queries takes
+   return_uncertainty=True and returns a (flow, b) TUPLE. While fixing this I
+   found a real inconsistency: decode_dense_fast had no such flag at all and
+   left b in module state (self.last_b), where a caller could read a stale
+   value from a previous decode. Both paths now return (flow, b).
+2. Stride-2 dense: tested on RANDOM NOISE, where flow is not spatially smooth,
+   so the interpolation the stride trick relies on cannot work -- 0.075 px
+   mean error. Re-tested on a real VKITTI2 pair: 0.0148 px. The earlier
+   "stride-2 is nearly free" claim holds; the noise test was invalid.
+   The suite now skips this check rather than run it on synthetic noise.
+
+Leak fix independently re-verified today: FlyingChairs+VKITTI2 = 27,914
+samples, 0 files touching Scene18/20, and the guard raises if val scenes are
+requested without allow_val_scenes=True.
