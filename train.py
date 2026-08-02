@@ -255,6 +255,7 @@ def main(args):
                 break
 
             optimizer.zero_grad()
+            set_frozen_bn_eval(model_without_ddp)   # cheap; cannot be undone by anything
 
             img1, img2, flow_gt, valid = [x.to(device) for x in sample]
 
@@ -443,6 +444,11 @@ def main(args):
                             f.write('\n\n')
 
                 model.train()
+                # model.train() re-enables BatchNorm updates; without this the
+                # backbone silently drifts between here and the next epoch
+                # boundary. An earlier version omitted it and accumulated 24,765
+                # BN updates over a 100k-step run.
+                set_frozen_bn_eval(model_without_ddp)
 
             if is_final:
                 break
