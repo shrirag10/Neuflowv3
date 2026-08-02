@@ -71,8 +71,9 @@ def load_imgs(p1, p2, dev):
     return ta, tb
 
 
-def make_model(ckpt, implicit, head='convex', dev='cuda'):
-    m = NeuFlow(use_implicit=implicit, head_mode=head).to(dev)
+def make_model(ckpt, implicit, head='convex', dev='cuda', uncertainty=False):
+    m = NeuFlow(use_implicit=implicit, head_mode=head,
+                predict_uncertainty=uncertainty).to(dev)
     load_with_new_keys(m, my_load_weights(ckpt),
                        missing_ok_substrings=['implicit_decoder_module', 'win_proj_'],
                        unexpected_ok_substrings=['conv_s8', 'upsample_s8'] if implicit else [])
@@ -147,6 +148,8 @@ def main():
     ap.add_argument('--v2_checkpoint', default='neuflow_mixed.pth')
     ap.add_argument('--head', default='convex')
     ap.add_argument('--limit', type=int, default=50)
+    ap.add_argument('--uncertainty', action='store_true',
+                    help='checkpoint was trained with the uncertainty head (11 outputs)')
     ap.add_argument('--check_units', action='store_true',
                     help='verify the GT scale convention, then exit')
     args = ap.parse_args()
@@ -185,7 +188,8 @@ def main():
         print('--checkpoint required (or use --check_units)'); return 1
 
     # ---- the comparison ----------------------------------------------------
-    v3 = make_model(args.checkpoint, implicit=True, head=args.head, dev=dev)
+    v3 = make_model(args.checkpoint, implicit=True, head=args.head, dev=dev,
+                    uncertainty=args.uncertainty)
     v2 = make_model(args.v2_checkpoint, implicit=False, dev=dev)
 
     acc = {k: dict(sum=0.0, n=0, a1=0, a3=0, ms=[]) for k in
