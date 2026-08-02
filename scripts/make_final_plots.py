@@ -134,8 +134,10 @@ plt.close()
 print(f'{OUT}/ablations.png')
 
 # =========================================================== 5. calibration (measured)
-bins = ['0.01-0.14', '0.14-0.27', '0.27-0.54', '0.54-1.48', '1.48+']
-err = [0.221, 0.334, 0.600, 1.410, 7.377]
+# measured on v3_FlyingChairs_VKITTI2_Sintel_uncertainty/step_100000, 2026-08-02
+# (2,348,000 samples; the earlier figures in this slot came from the pre-leak-fix run)
+bins = ['0.01-0.11', '0.11-0.20', '0.20-0.41', '0.41-1.22', '1.22+']
+err = [0.313, 0.504, 0.807, 1.652, 6.723]
 fig, ax = plt.subplots(figsize=(9, 4.8), dpi=150)
 bars = ax.bar(bins, err, color=HL, width=0.6, zorder=3)
 for b, v in zip(bars, err):
@@ -144,7 +146,9 @@ for b, v in zip(bars, err):
 ax.set_xlabel('Predicted error scale b, binned')
 ax.set_ylabel('Actual mean error, px')
 ax.set_title('The confidence signal is calibrated: predicted b tracks real error '
-             '(Pearson r = 0.38)', loc='left', fontsize=12, fontweight='bold')
+             '(Pearson r = 0.345)', loc='left', fontsize=12, fontweight='bold')
+ax.text(0.02, 0.93, '21x span from the most to the least confident bin',
+        transform=ax.transAxes, fontsize=9.5, color=MUTED)
 plt.tight_layout()
 plt.savefig(f'{OUT}/calibration_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()

@@ -382,8 +382,9 @@ def main():
              'scale b alongside each flow value,\n'
              'trained with a Laplace likelihood.\n\n'
              'Binned by predicted b, real error rises\n'
-             'monotonically from 0.22 px to 7.38 px.\n'
-             'Pearson r = 0.38 over 2.35M samples.\n\n'
+             'monotonically from 0.31 px to 6.72 px,\n'
+             'a 21x span. Pearson r = 0.345 over\n'
+             '2,348,000 samples.\n\n'
              'This is usable: weight correspondences\n'
              'in RANSAC, reject unreliable matches,\n'
              'or steer queries toward uncertain areas.\n\n'
@@ -392,8 +393,8 @@ def main():
     note(s, "This is the capability I am most confident about. The head predicts an error scale "
             "for every query alongside the flow itself. When you bin queries by predicted "
             "uncertainty, the actual error rises monotonically from 0.22 pixels in the "
-            "confident bin to 7.4 in the least confident. It is not perfectly correlated, r is "
-            "0.38, but it is clearly informative and it is directly usable: weight "
+            "confident bin to 6.7 in the least confident, a twenty-one fold span. It is not "
+            "perfectly correlated, r is 0.345, but it is clearly informative and it is directly usable: weight "
             "correspondences in RANSAC, drop unreliable ones, or send more queries where the "
             "model is unsure. v2 has no equivalent output, so there is nothing to compare it "
             "against.")
