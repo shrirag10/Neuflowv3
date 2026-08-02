@@ -12,7 +12,7 @@ queries against a cached frame at 7.7× lower cost, and a calibrated per-query
 confidence estimate.
 
 > MS Robotics thesis project · Northeastern University Field Robotics Lab
-> Full write-up: **[docs/NeuFlow_v3_Report.pdf](docs/NeuFlow_v3_Report.pdf)**
+> Full write-up: **[docs/NeuFlow_v3_Report.pdf](docs/NeuFlow_v3_Report.pdf)** (LaTeX source: `docs/NeuFlow_v3_Report.tex`)
 
 ---
 
@@ -167,7 +167,8 @@ scripts/              evaluation, benchmarking, visualisation, GUI
 hpc/                  cluster job generation and setup
 train_legacy/         earlier training shells, superseded by hpc/
 docs/
-  NeuFlow_v3_Report.pdf   full write-up
+  NeuFlow_v3_Report.tex   full write-up (LaTeX source)
+  NeuFlow_v3_Report.pdf   compiled
   V3DEV_LOG.md            chronological development record
   base_parameters.md      parameter provenance
   figures/                figures used here
