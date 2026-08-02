@@ -54,9 +54,11 @@ global matching at 1/16 to establish an initial flow; recurrent refinement (one
 iteration at 1/16, eight at 1/8); and a learned convex upsampler mapping 1/8
 resolution flow to full resolution.
 
-v3 retains everything up to and including the 1/8-resolution coarse flow, with
-weights frozen and batch-normalisation statistics held fixed, so the front end is
-numerically identical to v2's. Only the upsampler is replaced.
+v3 retains everything up to and including the 1/8-resolution coarse flow, with all
+learned weights frozen. Only the upsampler is replaced. In the runs reported here
+the batch-normalisation *running statistics* of the frozen stack adapted to the
+training data rather than remaining at v2's values (see §6); the learned weights
+are unchanged.
 
 ### 2.2 Implicit decoder
 
@@ -251,9 +253,21 @@ benchmark. Generalisation to field and survey imagery is untested.
 checkpoint variation of up to 0.038 px. Differences below roughly 0.05 px are not
 resolved.
 
+**Adapted normalisation statistics.** The frozen stack's learned weights are
+unchanged, but its batch-normalisation running statistics accumulated
+approximately 24,800 updates during training rather than staying at v2's values.
+Two consequences follow. First, the comparison in §4.1 is between v3 with
+statistics adapted to its own training set and v2 with statistics from
+FlyingThings, rather than a decoder-only comparison; for the mixed-data
+configurations that adaptation points toward the evaluation domain. Second,
+out-of-domain robustness suffers: on 1920×1080 Spring imagery, far from the
+320×496 training crops, the adapted statistics degrade the coarse flow badly
+while v2's untouched statistics do not. Runs with strictly frozen statistics are
+required to separate the decoder's contribution from this effect.
+
 **Spring evaluation.** Evaluation against Spring's 2× resolution ground truth,
-which would test querying above the input sampling rate, is in progress and not
-reported here.
+which would test querying above the input sampling rate, is pending the re-run
+described above.
 
 ---
 

@@ -1,175 +1,213 @@
-# NeuFlow v3
+# NeuFlow v3 — Queryable Optical Flow with Calibrated Uncertainty
 
-Built on top of [NeuFlow v2](https://arxiv.org/abs/2408.10161). NeuFlow v2 computes
-optical flow densely, at a fixed resolution, always. v3 replaces only its final
-upsampling stage with a queryable implicit decoder (in the lineage of
-[InfiniDepth](https://arxiv.org/abs/2601.03252) and AnyFlow): instead of always
-producing a full H×W map, the model answers flow queries at arbitrary continuous
-(x, y) coordinates, at a cost that scales with the number of queries, O(N), not
-image area, O(H×W).
+NeuFlow v3 replaces the fixed convex upsampler of
+[NeuFlow v2](https://github.com/neufieldrobotics/NeuFlow_v2) with an **implicit
+decoder that evaluates optical flow at arbitrary continuous coordinates**. The
+network answers queries instead of emitting a fixed-resolution map: cost scales
+with the number of points requested, O(N), rather than with image area, O(H×W).
 
-Everything upstream of the upsampler — the CNN backbone, cross-attention, matching,
-and recurrent refinement — is frozen and byte-for-byte unchanged from v2.
+It matches v2's accuracy using 13% fewer parameters, and adds three things the
+fixed-resolution design cannot express: flow at sub-pixel coordinates, repeat
+queries against a cached frame at 7.7× lower cost, and a calibrated per-query
+confidence estimate.
 
-Full history, every experiment (including the failed ones) and every verified
-number: [`docs/V3DEV_LOG.md`](docs/V3DEV_LOG.md). Status deck:
-[`docs/NeuFlow_v3_status.pptx`](docs/NeuFlow_v3_status.pptx).
-
----
-
-## Results (verified, full VKITTI2 Scene18+20 validation set, 1,174 pairs)
-
-| Configuration | Trained on | Mean EPE | 1px acc | 3px acc |
-|---|---|---|---|---|
-| NeuFlow v2 (reference) | FlyingThings | 2.324 px | 77.6% | 89.8% |
-| v3, untrained (bilinear init) | — | 2.476 px | 74.7% | 88.2% |
-| **v3, big18** (best EPE) | chairs+VKITTI2, 100K steps | **2.072 px** | 77.02% | 89.91% |
-| **v3, uncG** (uncertainty head) | chairs+VKITTI2, 100K steps | 2.082 px | **77.51%** | **90.02%** |
-| v3, grandmix | chairs+VKITTI2+Sintel, 100K steps | 2.166 px | 76.25% | 89.48% |
-| v3, spring (truncated at 70% of training) | +Spring, 70K/100K steps | 2.080 px | 76.94% | 89.88% |
-
-The best checkpoints beat v2 by ~11% on mean EPE, and `uncG` is the first configuration
-to also beat v2 on 3px accuracy (90.02 vs 89.8), with the 1px gap nearly closed
-(77.51 vs 77.6). All HPC runs used batch size 16, 100K steps, Explorer cluster.
-
-**Speed, identical V100 hardware:** v2 pays 19.6 ms on every call. v3 pays ~19.1 ms
-on the first query of a new frame (parity), then ~2.6 ms for every additional query
-batch on that same frame — v2 has no equivalent, since it always recomputes its
-full dense pass. That ~7x repeat-query speedup, not the EPE delta, is the real
-deployment argument.
-
-Two validated side capabilities v2 cannot express at all:
-
-- **Sparse queries match dense output exactly** — decoding N points equals the
-  dense value at those points to 0.00 px, verified.
-- **Calibrated per-query confidence** (`uncG`, the uncertainty head): predicted
-  error scale correlates with real error, Pearson r=0.38, rising monotonically
-  from 0.22 to 7.38 px across five bins on 2.35M sample points.
-
-Full details, every rejected idea, and exactly what's still unverified (sparse
-speed on every checkpoint, whether the uncertainty head's regularization effect
-is real or seed noise, no edge-device measurement yet) are in
-[`docs/V3DEV_LOG.md`](docs/V3DEV_LOG.md) and the deck's Limitations slide.
+> MS Robotics thesis project · Northeastern University Field Robotics Lab
+> Full write-up: **[docs/NeuFlow_v3_Report.pdf](docs/NeuFlow_v3_Report.pdf)**
 
 ---
 
-## Architecture
+## Results
 
-The decoder samples four feature sources per query:
+NeuFlow v2 and NeuFlow v3 on the same VKITTI2 pair:
 
-- `ctx_s8` — 64d context from img0 at 1/8 resolution
-- `feat_s8` — 128d matching features at 1/8 resolution
-- `feat_s16` — 128d features at 1/16 resolution
-- `feat1_s8` (warped) — img1 features at the coarse-flow-predicted correspondence,
-  giving the decoder explicit cross-frame information (InfiniDepth doesn't need
-  this since it's single-image depth, not two-frame flow)
+![v2 vs v3](docs/figures/head_to_head.png)
 
-These fuse hierarchically (shallow → deep, gated residual) into a 260-d vector fed
-to a head that outputs **softmax weights over a 3×3 coarse-flow neighborhood plus
-a bilinear candidate** — a bounded convex blend, so it cannot hallucinate large
-flow. The head is zero-initialized, so an untrained decoder exactly reproduces
-plain bilinear upsampling (2.476 px EPE, verified).
+### Accuracy — VKITTI2 Scene18+20, 1,174 pairs, 460M pixels
 
-An earlier direct-regression head (predicting a flow delta directly, unbounded)
-never trained below its own initialization — see the log for the full story. The
-convex head above is the fix, and is what every result in this README uses.
+![accuracy](docs/figures/accuracy_bars.png)
 
-Optional: `--uncertainty` adds one extra output channel, the predicted error
-scale `b`, trained with a self-calibrating Laplace loss (`|error|/b + 2 log b`).
+| Model | Training data | EPE (px) | 1px % | 3px % | Params |
+|---|---|---|---|---|---|
+| NeuFlow v2 | FlyingThings | 2.324 | 77.63 | 89.80 | 9.03 M |
+| NeuFlow v3 | FlyingChairs | 2.286 | 71.30 | 87.57 | **7.83 M** |
+| NeuFlow v3 | + VKITTI2 | 2.138 | 76.38 | 89.46 | 7.83 M |
+| NeuFlow v3 | + MPI-Sintel | 2.147 | 76.81 | 89.56 | 7.83 M |
+| NeuFlow v3 | + uncertainty head | **2.104** | 76.88 | 89.61 | 7.83 M |
 
-### Two-pass query API
+The **FlyingChairs row is the like-for-like comparison**: no driving imagery in
+training, mirroring v2, which likewise saw none. The two models are equivalent on
+it. The mixed-data rows train on VKITTI2 scenes from the same simulator as the
+test set, so they show what the architecture achieves given representative data
+rather than a fair-comparison advantage.
+
+Scene18 and Scene20 are excluded from every training set, enforced in the loader
+and verified at pair and frame level before each run.
+
+### Compute
+
+![speed](docs/figures/speed_bars.png)
+
+| Mode | Latency | Note |
+|---|---|---|
+| NeuFlow v2, full frame | 19.6 ms | its only mode |
+| v3 sparse, first query on a new pair | 19.16 ms | equivalent to v2 |
+| **v3 sparse, repeat query on a cached pair** | **2.55 ms** | **7.7× cheaper** |
+| v3 dense output, stride 2 | 22.0 ms | not the intended mode |
+
+The sparse path is a 16.61 ms coarse pass (inherited from v2) plus a 2.55 ms
+decode. Global matching needs whole-image context, so the coarse pass is
+irreducible and dominates a first query.
+
+**State reuse is the decisive property.** v2 keeps nothing between calls, so a
+second question about the same frame costs a full recomputation. v3 answers it
+from cached state. Decode latency is flat from N=800 to N=2,048 (2.553 vs
+2.554 ms) — launch-overhead bound, so 2,048 points cost the same as 800.
+
+### Calibrated uncertainty
+
+![calibration](docs/figures/calibration_bars.png)
+
+An optional head predicts a per-query error scale `b` under a Laplace likelihood.
+Over 2,348,000 queries, actual error rises monotonically across all five
+confidence bins — a 21× span, Pearson r = 0.345. Usable for weighting
+correspondences in RANSAC, rejecting unreliable matches, or steering queries
+toward uncertain regions. **v2 emits flow alone and has no comparable output.**
+
+---
+
+## Usage
 
 ```python
+from NeuFlow.neuflow import NeuFlow
+
 model = NeuFlow(use_implicit=True, head_mode='convex')
-state = model.infer_coarse_state(img0, img1)              # once per frame pair, ~17-33 ms
-flow  = model.decode_queries(state, query_coords=q)        # q: [B, N, 2] pixel coords -> [B, N, 2]
-flow  = model.decode_queries(state, target_h=H, target_w=W)   # dense grid, any resolution
-flow, b = model.decode_queries(state, query_coords=q, return_uncertainty=True)  # needs predict_uncertainty=True
+
+state = model.infer_coarse_state(img0, img1)            # once per pair, 16.6 ms
+flow  = model.decode_queries(state, query_coords=q)     # q: [B, N, 2] -> [B, N, 2]
+flow  = model.decode_queries(state, target_h=H, target_w=W)   # dense, any resolution
+flow  = model.decode_queries(state, adaptive_n=1000)    # auto-place at motion boundaries
+flow, b = model.decode_queries(state, query_coords=q, return_uncertainty=True)
 ```
+
+Coordinates are continuous — `(312.7, 188.2)` is as valid as `(312, 188)`.
+Sparse queries reproduce the dense field exactly at matching coordinates
+(0.00057 px maximum difference).
+
+Sparse queries at detected corners, decoded in a single call:
+
+![sparse queries](docs/figures/sparse_queries.png)
+
+### Interactive tool
+
+```bash
+python3 scripts/video_region_gui.py --video clip.mp4 --checkpoint <ckpt>
+```
+
+Load a video, step frame by frame, drag a box, get flow for that region with a
+live cost breakdown. Two modes: exact decoding inside the box against a
+full-frame coarse pass, or a cropped mode where the whole pipeline runs on the
+selection so cost scales with the area requested.
+
+![GUI](docs/figures/region_gui_window.png)
 
 ---
 
-## Training
+## Method
 
-Needs `neuflow_mixed.pth` (pretrained v2 checkpoint) in the project root.
+v3 keeps NeuFlow v2 intact up to its 1/8-resolution coarse flow — backbone,
+cross-attention, global matching and recurrent refinement — with all learned
+weights frozen. Only the upsampler is replaced.
 
-```bash
-python3 train.py \
-  --stage mix_chairs_vkitti2 --implicit --head convex --sparse_loss \
-  --num_sparse_points 4096 --adaptive_query_ratio 0.5 --no_query_jitter \
-  --batch_size 16 --lr 2e-4 --onecycle --gamma 0.8 \
-  --train_iters_s16 1 --train_iters_s8 8 --num_steps 100000 \
-  --resume neuflow_mixed.pth --checkpoint_dir checkpoints/my_run
-```
+**Phase 1**, once per frame pair: the frozen pipeline produces the coarse flow and
+feature maps, which are cached.
 
-`--head convex` is required — the default is now `convex` (the old `regress` head
-is kept only for loading pre-2026-07-09 checkpoints). Dataset stages available in
-`data_utils/datasets.py`: `chairs`, `vkitti2`, `vkitti2_all`, `mix_chairs_vkitti2`,
-`grand_mix` (+Sintel), `spring_mix` (+Spring), `things`, `sintel`, `kitti`, `viper`.
+**Phase 2**, once per query batch: for a coordinate (x, y) the decoder samples 3×3
+windows from four sources (1/8 context, 1/8 features, 1/16 features, flow-warped
+frame-1 features), fuses them through a gated MLP, and predicts weights over ten
+candidates — the nine neighbouring coarse-flow values plus a bilinear sample.
 
-HPC (Northeastern Explorer cluster) setup and job scripts: [`hpc/`](hpc/),
-walkthrough in [`hpc/explorer_setup.md`](hpc/explorer_setup.md).
-
-### Evaluation
-
-```bash
-python3 scripts/eval_vkitti2.py --head convex \
-  --checkpoint checkpoints/my_run/step_100000.pth --dataset_root datasets/vkitti2
-```
-
-Add `--fast_dense --stride 2` for the accelerated dense path (folds window
-projections into per-image convs, ~3x faster, <0.02 px EPE cost). Add
-`--uncertainty` if the checkpoint was trained with `--uncertainty`.
-
-Sparse-query speed (the deployment-relevant number): `scripts/benchmark_sparse.py`.
-Uncertainty calibration check: `scripts/eval_calibration.py`.
+The output is a **convex combination** of those candidates, so it is bounded
+inside the locally supported motion range and cannot hallucinate unsupported
+displacement. The head is initialised so the softmax concentrates on the bilinear
+candidate, making the untrained decoder exactly equivalent to bilinear upsampling
+(verified: 0.011 px max deviation). Training departs from a known-good starting
+point only by learning.
 
 ---
 
-## Interactive tool
+## Reproducing
 
 ```bash
-python3 scripts/query_gui.py --img1 <path> --img2 <path> --checkpoint <path>
+python3 scripts/verify_pipeline.py                          # 9-check pre-flight suite
+python3 scripts/check_leak.py --stage FlyingChairs+VKITTI2  # train/eval split integrity
+python3 scripts/eval_all_runs.py --fast_dense --stride 2    # accuracy table
+python3 scripts/benchmark_sparse.py --checkpoint <ckpt> --head convex --n 800 2048
+python3 scripts/eval_calibration.py --checkpoint <uncertainty ckpt>
 ```
 
-PyQt5 GUI: click any pixel for its flow, adaptive/grid/region query modes, a
-model selector to compare against the v2 baseline in place, video and YouTube
-playback with live motion detection, and a system-resources tab (FPS, latency,
-GPU/CPU/RAM graphs).
+Training configurations are generated from a single template
+(`hpc/make_sbatch.py`) so any two runs differ in exactly one variable — same seed
+(1234), batch size (16), schedule, query count and step count.
+
+```bash
+python3 hpc/make_sbatch.py          # regenerate the sbatch files
+sbatch hpc/v3_FlyingChairs.sbatch   # one run
+```
 
 ---
 
 ## Repository layout
 
 ```text
-NeuFlow/                  model code
-  implicit_decoder.py      the queryable decoder (the v3 contribution)
-  neuflow.py               wires the decoder into the frozen v2 pipeline
-  config.py, backbone_v7.py, transformer.py, matching.py, corr.py, refine.py, ...
-
-data_utils/                dataset loaders (chairs/vkitti2/sintel/spring/...), flow viz, frame utils
-utils/                     checkpoint loading, loss functions, DDP utils
-
-scripts/
-  eval_vkitti2.py          full-set evaluation against ground truth
-  eval_coarse.py           decoder-free coarse-flow eval (for refinement-only changes)
-  eval_calibration.py      uncertainty-head calibration check
-  benchmark_sparse.py      sparse-query deployment-speed benchmark
-  query_gui.py             interactive PyQt5 tool
-  train_distill.py         refinement self-distillation (no ground truth)
-  make_final_plots.py      regenerates the deck's comparison plots
-  build_final_deck.py      regenerates docs/NeuFlow_v3_status.pptx
-
-hpc/                       Explorer cluster setup, sbatch job scripts
+NeuFlow/              model — implicit_decoder.py is the v3 contribution
+data_utils/           dataset loaders, flow IO, augmentation
+utils/                weight loading, freezing, losses, DDP helpers
+scripts/              evaluation, benchmarking, visualisation, GUI
+  archive/            superseded scripts, kept for provenance
+hpc/                  cluster job generation and setup
+train_legacy/         earlier training shells, superseded by hpc/
 docs/
-  V3DEV_LOG.md             complete running history — read this for anything historical
-  NeuFlow_v3_status.pptx   current status deck
-  NeuFlow_v3_Report.md     prose report
-  base_parameters.md       paper-derived parameter choices and their justification
-
-train.py                   training entry point
+  NeuFlow_v3_Report.pdf   full write-up
+  V3DEV_LOG.md            chronological development record
+  base_parameters.md      parameter provenance
+  figures/                figures used here
 ```
 
 ---
 
-Based on NeuFlow v2 (Zhao et al., 2024), InfiniDepth (Yu et al., 2025), and AnyFlow (CVPR 2023).
+## Limitations
+
+- **Sub-pixel precision** trails v2 by 0.8–6.3 points of 1px accuracy. Cause
+  identified: the decoder's finest input is 1/8 resolution, so evidence varies
+  little within an 8×8 cell, while v2's upsampler reads the full-resolution frame.
+  A Fourier positional encoding produced no change, showing the limitation is
+  missing high-resolution *features*, not missing positional information.
+- **Adapted normalisation statistics.** The frozen stack's learned weights are
+  unchanged, but its BatchNorm running statistics accumulated ~24,800 updates
+  during the reported runs instead of staying at v2's values. The comparison is
+  therefore v3-with-adapted-statistics against v2-with-FlyingThings-statistics,
+  not a decoder-only comparison, and out-of-domain robustness suffers as a result.
+  The training loop is fixed; re-runs with strictly frozen statistics are pending.
+- **No embedded measurement.** All latency figures are V100 and RTX 4060.
+- **One evaluation domain.** VKITTI2 only; generalisation to field imagery
+  untested.
+- **Statistical resolution.** One seed per configuration, with
+  checkpoint-to-checkpoint variation up to 0.038 px, so differences below roughly
+  0.05 px are not resolved.
+
+![checkpoint noise](docs/figures/checkpoint_noise.png)
+
+For applications consuming a full dense flow field once per frame, **NeuFlow v2
+remains the better choice** — 12% faster in that mode and more precise per pixel.
+v3 is the right choice when the consumer picks its own query points, revisits a
+frame, needs positions between pixels, or wants a confidence value.
+
+---
+
+## Acknowledgements
+
+Built on [NeuFlow v2](https://github.com/neufieldrobotics/NeuFlow_v2) (Zhang,
+Gupta, Jiang & Singh, arXiv:2408.10161). The implicit decoder draws on AnyFlow
+(Jung et al., CVPR 2023) for convex-weight upsampling and InfiniDepth for the
+gated multi-scale fusion. Thanks to the Northeastern Field Robotics Lab, and to
+Northeastern Research Computing for Explorer cluster access.
