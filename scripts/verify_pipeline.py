@@ -15,7 +15,9 @@ from NeuFlow.neuflow import NeuFlow
 from utils.load_model import (my_load_weights, load_with_new_keys, my_freeze_model,
                               set_frozen_bn_eval)
 
-DEV = torch.device('cpu')
+DEV = torch.device('cuda' if (os.environ.get('VERIFY_GPU') and torch.cuda.is_available())
+                   else 'cpu')
+AMP = DEV.type == 'cuda'
 H, W = 128, 256
 PASS, FAIL = [], []
 
@@ -33,7 +35,7 @@ def build(head='convex', unc=False, freeze=True):
     if freeze:
         my_freeze_model(m)
     m.eval()
-    m.init_bhwd(1, H, W, DEV, amp=False)
+    m.init_bhwd(1, H, W, DEV, amp=AMP)
     return m
 
 
@@ -64,15 +66,19 @@ def real_pair():
             im = cv2.cvtColor(cv2.imread(f), cv2.COLOR_BGR2RGB)[:H, :W]
             if im.shape[:2] != (H, W):
                 im = cv2.resize(im, (W, H))
-            ims.append(torch.from_numpy(im).permute(2, 0, 1).float()[None])
+            t = torch.from_numpy(im).permute(2, 0, 1).float()[None].to(DEV)
+            ims.append(t.half() if AMP else t)
         return ims[0], ims[1], os.path.basename(pair[0])
     return None
 
 
 def main():
+    print(f'device: {DEV}  amp/fp16: {AMP}\n')
     torch.manual_seed(0)
-    a = torch.rand(1, 3, H, W) * 255
-    b = torch.rand(1, 3, H, W) * 255
+    a = (torch.rand(1, 3, H, W) * 255).to(DEV)
+    b = (torch.rand(1, 3, H, W) * 255).to(DEV)
+    if AMP:
+        a, b = a.half(), b.half()
 
     # ---- 1. BatchNorm really is frozen in train mode -----------------------
     m = build()
@@ -80,8 +86,9 @@ def main():
             if k.endswith(('.running_mean', '.running_var', '.num_batches_tracked'))}
     m.train()
     n_bn = set_frozen_bn_eval(m)
-    for _ in range(2):
-        m(a, b, iters_s16=1, iters_s8=2)
+    with torch.amp.autocast('cuda', enabled=AMP):
+        for _ in range(2):
+            m(a, b, iters_s16=1, iters_s8=2)
     now = m.state_dict()
     drift = max((now[k].float() - snap[k].float()).abs().max().item() for k in snap)
     check('BatchNorm frozen during training', n_bn > 0 and drift == 0.0,
@@ -98,7 +105,7 @@ def main():
     m = build()
     hd = m.implicit_decoder_module.convex_head
     torch.nn.init.zeros_(hd.layers[-1].weight); torch.nn.init.zeros_(hd.layers[-1].bias)
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast('cuda', enabled=AMP):
         st = m.infer_coarse_state(a, b)
         dense = m.decode_dense_fast(st, stride=1)
         bilin = torch.nn.functional.interpolate(
@@ -109,13 +116,13 @@ def main():
 
     # ---- 4. sparse queries agree with the dense field ----------------------
     m = build()
-    with torch.no_grad():
+    with torch.no_grad(), torch.amp.autocast('cuda', enabled=AMP):
         st = m.infer_coarse_state(a, b)
         dense = m.decode_dense_fast(st, stride=1)
         ys = torch.randint(0, H, (64,)); xs = torch.randint(0, W, (64,))
-        q = torch.stack([xs.float(), ys.float()], -1)[None]
+        q = torch.stack([xs.float(), ys.float()], -1)[None].to(DEV)
         sp = m.decode_queries(st, query_coords=q)[0]
-    ref = dense[0, :, ys, xs].T
+    ref = dense[0, :, ys.to(DEV), xs.to(DEV)].T
     d = (sp - ref).abs().max().item()
     check('sparse query == dense at same coords', d < 1e-3, f'max diff {d:.6f} px')
 
@@ -123,9 +130,9 @@ def main():
     m = build(unc=True)
     ok, detail = True, ''
     try:
-        with torch.no_grad():
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=AMP):
             st = m.infer_coarse_state(a, b)
-            q = torch.tensor([[[10.0, 10.0], [50.5, 33.2]]])
+            q = torch.tensor([[[10.0, 10.0], [50.5, 33.2]]], device=DEV)
             fs, bs = m.decode_queries(st, query_coords=q, return_uncertainty=True)
             fd, bd = m.decode_dense_fast(st, stride=2, return_uncertainty=True)
         ok = (fs.shape[-1] == 2 and bs.shape[-1] == q.shape[1]
@@ -150,7 +157,7 @@ def main():
     else:
         ra, rb, tag = rp
         m = build()
-        with torch.no_grad():
+        with torch.no_grad(), torch.amp.autocast('cuda', enabled=AMP):
             st = m.infer_coarse_state(ra, rb)
             d1 = m.decode_dense_fast(st, stride=1)
             d2 = m.decode_dense_fast(st, stride=2)
