@@ -12,10 +12,11 @@ So this is a capability comparison, not a margin. The honest framing is: both
 are scored against the same 4K ground truth, and v2's row is the best that a
 fixed-resolution network can offer.
 
-Ground-truth units: the stored .flo5 is at 2x resolution with displacements in
-4K pixels (data_utils/frame_utils.read_flo5 subsamples AND halves, which only
-makes sense under that convention). --check_units verifies this empirically
-instead of trusting the comment; run it once before believing any number here.
+Ground-truth units: the stored .flo5 sits on a 2x grid but its VALUES are
+displacements in input-resolution pixels, so predictions are compared to it
+directly with no rescaling. This was established by --check_units (v2 scores
+0.644 px against the raw GT and 3.320 px against a halved one) and contradicted
+the comment previously in read_flo5, which had been halving Spring's targets.
 
     python3 scripts/eval_spring_4k.py --check_units --limit 3
     python3 scripts/eval_spring_4k.py --checkpoint <ckpt> --limit 50
@@ -127,7 +128,8 @@ def v2_dense_upscaled(model, ta, tb, out_h, out_w, amp):
 
 
 def score(pred_input_units, gt_4k, scale):
-    """pred is in input-pixel units; GT is in 4K pixel units -> multiply by scale."""
+    """Both are in input-pixel units, so scale is 1.0 for real evaluation.
+    The argument exists only so --check_units can test the alternative."""
     pred = pred_input_units * scale
     gt = torch.from_numpy(gt_4k).permute(2, 0, 1).to(pred.device)
     valid = torch.isfinite(gt).all(dim=0)
@@ -176,7 +178,7 @@ def main():
         print(f'\n  mean EPE assuming GT in 4K units  (pred x2): {s1/3:.3f}')
         print(f'  mean EPE assuming GT in input units (pred x1): {s2/3:.3f}')
         print(f'\n  -> the smaller value is the correct convention: '
-              f'{"4K units (x2), matches read_flo5" if s1 < s2 else "INPUT units (x1) -- read_flo5 IS WRONG"}')
+              f'{"4K units (x2)" if s1 < s2 else "INPUT units (x1), which is what read_flo5 now does"}')
         return 0
 
     if not args.checkpoint:
@@ -217,7 +219,7 @@ def main():
         for key, pred, ms in (('v3_native_4k', f3, t_v3),
                               ('v2_upscaled_4k', f2, t_v2),
                               ('v3_1080p_upscaled', f3l, float('nan'))):
-            r = score(pred, gt, scale=2.0)
+            r = score(pred, gt, scale=1.0)
             if r is None:
                 continue
             a = acc[key]
