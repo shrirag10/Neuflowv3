@@ -640,3 +640,29 @@ data, so it can be run with any checkpoint.
 the deck: withdrawn claims listed up front, methodology before results, the
 checkpoint-noise section, and an honest scorecard (accuracy NOT MET, compute
 PARTLY, edge UNPROVEN).
+
+### Spring ground-truth scale bug, found by --check_units (2026-08-02)
+
+`read_flo5` was dividing Spring flow values by 2.0 on the assumption that the
+2x-resolution ground truth stored displacements in 4K-grid pixels. It does not.
+Empirical check, scoring NeuFlow v2 (which predicts in input-resolution pixels)
+against both readings on 3 Spring pairs:
+
+    GT read as 4K units   (pred x2) : 3.320 px EPE
+    GT read as input units (pred x1): 0.644 px EPE   <- correct
+
+A 5x difference, and 3.32 px is close to Spring's mean flow magnitude, exactly
+what doubling an otherwise-correct prediction produces. So the values are
+displacements in INPUT pixels sampled on a 2x grid: converting to input
+resolution is a pure subsample with no rescaling. Fixed.
+
+**Blast radius: zero reported results.** spring_mix is the only stage that reads
+.flo5, and the only run using it (v3_FlyingChairs_VKITTI2_Sintel_Spring) timed
+out at step 50,000 and was already excluded as incomparable. Every reported
+number comes from FlyingChairs / VKITTI2 / MPI-Sintel, none of which touch this
+code path. Had the Spring run completed, it would have trained on halved targets
+for its Spring samples and been quietly wrong.
+
+This is the second time an assumption written in a comment turned out to be
+false (the first was the fusion-on-grid "+0.02 px"). Both were caught by
+measuring rather than reading.

@@ -129,13 +129,20 @@ def writeFlowKITTI(filename, uv):
 
 
 def read_flo5(filename):
-    """Spring .flo5: HDF5 flow at 2x image resolution (3840x2160 for 1080p frames).
-    Returns flow subsampled to image resolution with values halved to match
-    (official spring_utils convention for training at input resolution)."""
+    """Spring .flo5: HDF5 flow stored on a 2x grid (3840x2160 for 1080p frames).
+
+    The VALUES are displacements in INPUT-resolution pixels, not in 4x-grid
+    pixels, so converting to input resolution is a pure subsample with NO
+    rescaling. This was verified empirically -- scoring NeuFlow v2 (which
+    predicts in input units) against the raw GT gives 0.644 px EPE, against a
+    halved GT 3.320 px, a 5x difference; see scripts/eval_spring_4k.py
+    --check_units. An earlier version of this function divided by 2.0, which
+    halved every Spring training target.
+    """
     import h5py
     with h5py.File(filename, 'r') as f:
         flow = f['flow'][()]
-    flow = flow[::2, ::2].astype(np.float32) / 2.0
+    flow = flow[::2, ::2].astype(np.float32)
     # Spring GT contains NaN at invalid pixels (sky, out-of-frame). Map them to
     # a huge magnitude so FlowDataset's |flow|<1000 validity check marks them
     # invalid, and no NaN reaches gradients/multinomial/loss.
