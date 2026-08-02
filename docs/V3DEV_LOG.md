@@ -561,3 +561,43 @@ code -- worth recording because the second one nearly produced a false alarm:
 Leak fix independently re-verified today: FlyingChairs+VKITTI2 = 27,914
 samples, 0 files touching Scene18/20, and the guard raises if val scenes are
 requested without allow_val_scenes=True.
+
+### GPU verification + video region GUI (2026-07-26, GPU restored)
+
+Verification suite re-run on GPU with fp16: **9/9 pass** (same as CPU). One
+device-placement bug in the test itself was fixed. GPU seed reproducibility
+confirmed separately from CPU (5.598 == 5.598).
+
+**scripts/video_region_gui.py** -- load a video, step frame by frame, drag a
+box, get flow for that region. Two modes, both timed:
+
+  QUERY: full coarse pass + decode inside the box only. Exact.
+  CROP:  crop the input to box+margin, run the whole pipeline on it. Approximate
+         (loses context outside the crop; motion leaving the crop is unfindable).
+
+Measured on RTX 4060, 640x300 synthetic clip, 260x150 box (20% of frame),
+stride-2 decode, steady state:
+
+  QUERY  coarse 13.5 ms + decode 6.0 ms  = 19.5 ms   (repeat box: 6.0 ms)
+  CROP   coarse  9.8 ms + decode 1.9 ms  = 11.8 ms
+  v2     whole frame                      ~12-16 ms
+
+Three measurement traps found and fixed while building this, each of which
+would have produced a wrong number in a demo:
+
+1. **Cold-start dominates.** First CUDA call at a new tensor shape measured
+   367 ms against ~13 ms steady state -- 28x. Added FlowEngine.warmup(); the
+   self-test now runs each mode twice and reports the second.
+2. **Every new box is a new shape**, so crop mode pays autotuning per box
+   (50-90 ms first call, ~10 ms after). Real interactive cost unless crops are
+   padded to standard sizes -- worth noting as future work.
+3. **The readout compared unlike things**: CROP's coarse+decode against the full
+   frame's coarse ONLY, which made crop look 5x slower than it is. Timings are
+   now split, and the like-for-like line compares coarse against coarse (1.37x
+   for a 46%-area crop -- consistent with cost scaling by area).
+
+Honest reading: for a FIRST query on a new frame, v3 is not faster than v2
+(19.5 vs ~13 ms) -- the coarse pass dominates and v3's decode is more expensive
+per pixel than v2's convex upsampler. The genuine wins are (a) repeat queries on
+an already-processed frame, 6.0 ms against v2's full 13 ms recompute, and
+(b) CROP mode, where cost scales with the area actually requested.
