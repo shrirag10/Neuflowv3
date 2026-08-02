@@ -291,8 +291,9 @@ def main():
              'domain advantage, not a better method,\n'
              'and I do not present them as beating v2.', 11.5, False, INK, 1.18)
     chip(s, 8.4, 5.45, 4.3, 0.95,
-         'Best overall: 2.104 px\nwith uncertainty head,\ntrained on FlyingChairs + VKITTI2 + Sintel',
-         10.5, BOX_LT)
+         'The three mixes land between 2.10 and 2.16 px\n'
+         'and are not separable from one another.\n'
+         'See slide 9.', 10.5, BOX_LT)
     note(s, "Here is the accuracy picture. The teal bar is the only fair comparison, because "
             "that model trained on FlyingChairs alone and never saw a road, just as v2 never "
             "saw VKITTI2. It gets 2.286 against v2's 2.324. That is a tie. The grey bars are "
@@ -354,22 +355,36 @@ def main():
             "state and must redo everything. That is structural, not a margin.")
     footer(s, i)
 
-    # ============================================================ 9 ablations
+    # ============================================================ 9 what is resolvable
     s, i = slide()
-    header(s, 'RESULTS', 'Two clean single-variable ablations')
-    s.shapes.add_picture('results/plots/ablations.png', Inches(1.15), Inches(1.7),
-                         width=Inches(9.6))
-    add_text(s, 0.75, 5.75, 11.9, 1.0,
-             'Both pairs are identical in seed, schedule and every hyperparameter; one thing changes.\n'
-             'Adding MPI-Sintel to the mix costs 0.4% despite 10,410 extra pairs, so it does not earn its place.\n'
-             'The uncertainty head gains 2.0% while also producing a confidence value, so it is kept.',
-             12, False, INK, 1.2)
-    note(s, "These two are the cleanest results in the project, because everything is held "
-            "fixed except one thing. On the left, adding MPI-Sintel to the training mix made it "
-            "slightly worse despite ten thousand extra pairs, so Sintel does not earn its "
-            "place. On the right, adding the uncertainty head improved accuracy by two percent "
-            "on identical data. That is a free gain from an auxiliary loss acting as a "
-            "regulariser, and it also gives you a confidence signal, which is the next slide.")
+    header(s, 'RESULTS', 'What this experiment can and cannot resolve')
+    s.shapes.add_picture('results/plots/checkpoint_noise.png', Inches(0.75), Inches(1.6),
+                         width=Inches(7.5))
+    add_text(s, 8.55, 1.75, 4.2, 3.9,
+             'Evaluating step 90,000 and step 100,000\n'
+             'of the same four runs moves each result\n'
+             'by up to 0.038 px.\n\n'
+             'The differences between the runs are the\n'
+             'same size. Two orderings reverse:\n\n'
+             '  MPI-Sintel helps at 90k (-0.051),\n'
+             '  hurts at 100k (+0.009)\n\n'
+             '  the uncertainty head hurts at 90k\n'
+             '  (+0.011), helps at 100k (-0.043)\n\n'
+             'With one seed and one checkpoint,\n'
+             'neither question is answerable.', 11.5, False, INK, 1.16)
+    chip(s, 0.75, 5.95, 7.5, 0.85,
+         'What IS robust: adding driving data to FlyingChairs gains about 0.15 px and 5 points of 1-pixel\n'
+         'accuracy at BOTH checkpoints. Everything finer than that is inside the noise.', 11)
+    note(s, "I want to show you a slide that removes two of my own results. I had claimed two "
+            "clean ablations: that Sintel adds nothing, and that the uncertainty head helps by "
+            "two percent. Then I evaluated a second checkpoint of the same runs, ten thousand "
+            "steps earlier, and both conclusions reversed. Sintel helps at 90k and hurts at "
+            "100k. The uncertainty head hurts at 90k and helps at 100k. The differences I was "
+            "interpreting are smaller than the variation between checkpoints of a single run. "
+            "So with one seed and one checkpoint I cannot answer either question, and I am not "
+            "going to pretend otherwise. What is robust is the coarse effect: adding driving "
+            "data gains about 0.15 pixels at both checkpoints. To resolve anything finer I "
+            "would need multiple seeds and an average over late checkpoints.")
     footer(s, i)
 
     # ============================================================ 10 calibration
@@ -503,9 +518,9 @@ def main():
         ('Spring run truncated',
          'Killed by the 8-hour wall clock at roughly 90k of 100k steps, so it is not directly '
          'comparable to the others.'),
-        ('One seed per configuration',
-         'Differences under about 0.05 px should not be over-read; I have not measured '
-         'seed-to-seed variance.'),
+        ('One seed, and checkpoint noise the size of the effects',
+         'Step 90k vs 100k of the same run moves EPE by up to 0.038 px, reversing two of the '
+         'orderings. Nothing finer than about 0.05 px is resolvable here.'),
     ]
     y = 1.8
     for t, d in items:

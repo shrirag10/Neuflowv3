@@ -107,31 +107,36 @@ plt.savefig(f'{OUT}/speed_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/speed_bars.png')
 
-# =========================================================== 4. two clean ablations
-fig, (axl, axr) = plt.subplots(1, 2, figsize=(11, 4.6), dpi=150)
+# =========================================================== 4. checkpoint noise
+# Evaluating step 90k and 100k of the SAME runs shows the between-run
+# differences are smaller than the between-checkpoint variation. Both
+# "ablations" reverse sign depending on which checkpoint is used.
+names = ['FlyingChairs', '+VKITTI2', '+MPI-Sintel', '+uncertainty']
+at90  = [2.294, 2.160, 2.109, 2.120]
+at100 = [2.286, 2.138, 2.147, 2.104]
 
-axl.bar(['without\nSintel', 'with\nSintel'], [2.138, 2.147],
-        color=[INK, MUTED], width=0.5, zorder=3)
-for i, v in enumerate([2.138, 2.147]):
-    axl.text(i, v + 0.004, f'{v:.3f}', ha='center', fontsize=11, fontweight='bold')
-axl.set_ylim(2.05, 2.20); axl.set_ylabel('Mean EPE, px')
-axl.set_title('MPI-Sintel adds nothing\n(10,410 extra pairs, 0.4% worse)',
-              loc='left', fontsize=11, fontweight='bold')
-
-axr.bar(['standard\nhead', 'uncertainty\nhead'], [2.147, 2.104],
-        color=[MUTED, HL], width=0.5, zorder=3)
-for i, v in enumerate([2.147, 2.104]):
-    axr.text(i, v + 0.004, f'{v:.3f}', ha='center', fontsize=11, fontweight='bold')
-axr.set_ylim(2.05, 2.20); axr.set_ylabel('Mean EPE, px')
-axr.set_title('Uncertainty head helps\n(same data, 2.0% better, and adds a capability)',
-              loc='left', fontsize=11, fontweight='bold')
-
-fig.suptitle('Two single-variable ablations: identical seed, data and schedule, one thing changed',
-             fontsize=12, x=0.01, ha='left', fontweight='bold')
-plt.tight_layout(rect=[0, 0, 1, 0.93])
-plt.savefig(f'{OUT}/ablations.png', bbox_inches='tight', facecolor='white')
+fig, ax = plt.subplots(figsize=(9.5, 5), dpi=150)
+x = np.arange(len(names))
+ax.plot(x, at90,  'o--', color=MUTED, lw=1.6, ms=9, label='step 90,000')
+ax.plot(x, at100, 'o-',  color=INK,   lw=1.8, ms=9, label='step 100,000')
+for xi, (a, b) in enumerate(zip(at90, at100)):
+    ax.plot([xi, xi], [a, b], color=WARN, lw=6, alpha=0.18, zorder=1,
+            solid_capstyle='round')
+    ax.text(xi + 0.10, (a + b) / 2, f'{abs(a-b):.3f}', fontsize=9, color=WARN,
+            va='center')
+ax.axhline(V2['epe'], color=WARN, ls='--', lw=1.2)
+ax.text(3.4, V2['epe'] + 0.005, f'v2: {V2["epe"]:.3f}', color=WARN, fontsize=9.5,
+        ha='right', va='bottom')
+ax.set_xticks(x); ax.set_xticklabels(names)
+ax.set_ylim(2.05, 2.36); ax.set_ylabel('Mean EPE, px')
+ax.legend(frameon=False, loc='upper right')
+ax.set_title('Two checkpoints of the same runs: the spread between them is as large\n'
+             'as the differences between the runs',
+             loc='left', fontsize=12, fontweight='bold')
+plt.tight_layout()
+plt.savefig(f'{OUT}/checkpoint_noise.png', bbox_inches='tight', facecolor='white')
 plt.close()
-print(f'{OUT}/ablations.png')
+print(f'{OUT}/checkpoint_noise.png')
 
 # =========================================================== 5. calibration (measured)
 # measured on v3_FlyingChairs_VKITTI2_Sintel_uncertainty/step_100000, 2026-08-02
