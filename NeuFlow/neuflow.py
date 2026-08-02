@@ -204,7 +204,7 @@ class NeuFlow(torch.nn.Module,
         return flow
 
     def decode_dense_fast(self, state, target_h=None, target_w=None, fusion_on_grid=True,
-                          stride=1):
+                          stride=1, return_uncertainty=False):
         """Fast dense decoding from cached state (see ImplicitFlowDecoder.forward_dense_fast).
 
         stride > 1 decodes a subsampled grid and bilinearly upsamples the flow
@@ -227,6 +227,18 @@ class NeuFlow(torch.nn.Module,
         )
         if stride > 1:
             flow = F.interpolate(flow, size=(th, tw), mode='bilinear', align_corners=False)
+
+        if return_uncertainty:
+            # Same (flow, b) tuple contract as decode_queries. b is returned
+            # explicitly rather than left in module state, where a caller could
+            # read a stale value from a previous decode.
+            if not self.implicit_decoder_module.predict_uncertainty:
+                raise RuntimeError('model was not built with predict_uncertainty=True')
+            b = self.implicit_decoder_module.last_b
+            b = b.reshape(flow.shape[0], 1, th // stride, tw // stride)
+            if stride > 1:
+                b = F.interpolate(b, size=(th, tw), mode='bilinear', align_corners=False)
+            return flow, b
         return flow
 
     def forward(self, img0, img1, iters_s16=1, iters_s8=8,
