@@ -666,3 +666,43 @@ for its Spring samples and been quietly wrong.
 This is the second time an assumption written in a comment turned out to be
 false (the first was the fusion-on-grid "+0.02 px"). Both were caught by
 measuring rather than reading.
+
+## 2026-08-02 -- BatchNorm freeze had a hole; the four completed runs drifted
+
+The Spring evaluation exposed it. On Spring pairs the v3 coarse flow blew up to
+17-35 px where v2 gave 0.34-1.35 px, despite the two supposedly sharing a frozen
+front end. diag_backbone.py localised it:
+
+  TEST A  45 of 137 shared tensors differ from v2; num_batches_tracked is
+          +24,765, so BatchNorm updated 24,765 times during a "frozen" run.
+  TEST B  loading the v3 checkpoint into v2's own forward path gives 16.680 px
+          where v2's weights give 0.339 px. The front end genuinely drifted.
+
+Root cause: set_frozen_bn_eval() was called once per EPOCH at the top of the
+while loop, but model.train() is also called inside the val_freq block every
+5,000 steps, which re-enables BatchNorm updates until the next epoch boundary
+(~1,875 steps at batch 16). Over 100k steps with val_freq 5000 that is roughly
+20 windows of drift -- consistent with the 24,765 observed.
+
+Fixed: set_frozen_bn_eval() is now called after the val block's model.train()
+AND at the top of every step. Verified with a simulated val boundary: 3 BN
+updates before, 0 after.
+
+Consequences for the completed runs:
+
+  - The claim "the front end is numerically identical to v2's" is FALSE for
+    v3_FlyingChairs, v3_FlyingChairs_VKITTI2, v3_FlyingChairs_VKITTI2_Sintel and
+    v3_..._uncertainty. Their BatchNorm statistics adapted to their training data.
+  - The VKITTI2 numbers remain real measurements of real models, but they are
+    "v3 with BN adapted to its training set" vs "v2 with BN from FlyingThings",
+    not a decoder-only comparison. For the three mixed runs, whose training data
+    includes VKITTI2, that adaptation points toward the test domain and is an
+    additional confound on top of the training-data one.
+  - It also explains the out-of-domain collapse: drifted statistics tuned to
+    320x496 crops fail at 1920x1080. v2, whose statistics were never touched,
+    handles Spring fine.
+  - The Spring 4K experiment cannot be interpreted until a run with genuinely
+    frozen BN exists; the 38 px figure measures the drift, not the decoder.
+
+Re-running the four configurations with the corrected code is the clean fix
+(~5 h each).
