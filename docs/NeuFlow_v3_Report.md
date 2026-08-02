@@ -1,246 +1,276 @@
 # NeuFlow v3 — Project Report
 
-**Shriman Raghav Srinivasan · MS Robotics, Northeastern University**
-Updated 2026-07-10 · replaces `docs/archive/report.pdf` and `docs/archive/proposal.pdf`
+**Shriman Raghav Srinivasan · MS Robotics, Northeastern University · Field Robotics Lab**
+Rewritten 2026-08-02 against leak-free results. Supersedes all earlier versions.
 
 ---
 
-## 1. Background: what NeuFlow v2 is
+## 0. What changed in this revision, and why
 
-NeuFlow v2 (Zhang, Gupta, Jiang, Singh — arXiv:2408.10161) is a real-time optical flow
-network for edge devices. Pipeline: a shallow CNN backbone extracts features at 1/8 and
-1/16 scale → cross-attention + global matching at 1/16 gives an initial flow → a
-lightweight recurrent refinement (1 iteration at 1/16, 8 at 1/8) produces flow at 1/8
-resolution → a **convex upsampler** (learned 3×3 blending weights on a fixed 8× grid)
-produces the full-resolution flow map. It runs 10–70× faster than SOTA methods at
-comparable accuracy (>20 FPS at 512×384 on a Jetson Orin Nano).
+Every number in the previous version of this report was produced under one or more
+of three defects. They are described in §3 because they matter more than any
+individual result. Two headline claims did not survive their correction:
 
-Its one structural limit: the output is a **dense, fixed-resolution map**. Every pixel is
-always computed, and only at the input resolution.
-
-## 2. What NeuFlow v3 changes
-
-v3 keeps the entire v2 pipeline through the 1/8-resolution coarse flow (backbone frozen,
-weights untouched) and replaces only the upsampler with an **implicit, queryable decoder**
-(InfiniDepth/AnyFlow lineage):
-
-- Any continuous (x, y) coordinate can be queried directly: cost is O(N) in the number
-  of queries, not O(H×W).
-- Two-pass API: `infer_coarse_state()` once per image pair (~33 ms), then
-  `decode_queries()` at ~1.6 ms per batch of ≤2k points — repeatable at no extra
-  backbone cost.
-- Decoder architecture: 3×3 local-window sampling of 4 feature sources (context,
-  1/8 features, 1/16 features, flow-warped frame-1 features), gated hierarchical fusion
-  (InfiniDepth Eq. 3), then a head.
-- **Convex-weight head** (added 2026-07-09, AnyFlow-style): the MLP outputs softmax
-  weights over the 3×3 coarse-flow neighborhood + a bilinear candidate. Output is a
-  bounded blend — it cannot hallucinate large flow. Initialization is biased to the
-  bilinear candidate, so an untrained decoder exactly reproduces bilinear upsampling.
-- **Fourier positional encoding** (added 2026-07-10, ablation in progress): encodes the
-  query's sub-cell offset so the head can produce sub-pixel-sharp output.
-- v3 is *smaller* than v2: 7.83M vs 9.03M parameters.
-
-## 3. Results (per-pixel, VKITTI2 Scene18+20, 1174 pairs, 460M pixels)
-
-All numbers from `scripts/eval_vkitti2.py` after the 2026-07-08 metrics fix.
-(Numbers reported before that date used per-frame statistics and are invalid.)
-
-| Configuration | Trained on | Mean EPE | 1px acc | 3px acc |
-|---|---|---|---|---|
-| NeuFlow v2 (reference) | FlyingThings | 2.324 | **77.6%** | **89.8%** |
-| v3, **no training at all** (bilinear init) | — | 2.476 | 74.7% | 88.2% |
-| v3 convex head | VKITTI2 (6 variants, 12.7k pairs) | 2.388 | 74.7% | 88.9% |
-| v3 convex head | **FlyingChairs only (22.2k pairs)** | **2.275** | 69.7% | 87.8% |
-| v3 convex, chairs → vkitti2 finetune | both, sequential | 2.499 | 74.6% | 88.6% |
-| v3 convex + Fourier PE | FlyingChairs | 2.288 | 69.7% | 87.8% |
-| **v3 convex, MIXED training** | **chairs + VKITTI2 jointly** | **2.183** | **76.4%** | **89.6%** |
-
-Visual comparisons: `results/visuals/compare_*.png` (GT vs v2 vs v3 + error maps),
-`results/visuals/sparse_queries.png` (300 corner queries in one 1.6 ms call),
-`results/visuals/query_gui_selftest.png` (interactive GUI).
-
-In-domain check (FlyingChairs validation, 640 held-out pairs): v2 2.238 px EPE / 78.7% 1px;
-chairs-trained v3 2.399 px / 76.6%. The 1px gap is smaller in-domain than on VKITTI2.
-
-Key findings:
-
-1. **Zero-training operating point.** With no decoder training whatsoever, v3 delivers
-   2.48 px EPE (+0.15 vs v2) while adding queryability. The sparse-query mechanism is
-   *exact*: decoding N points matches the dense output at those points to 0.00 px.
-2. **Chairs-only beats v2 on mean EPE** (2.275 vs 2.324) with no driving data in
-   training — evidence the queryable decoder generalizes rather than memorizes.
-3. **Failure mode found and fixed.** The original head regressed flow deltas scaled by
-   image width; it *never trained below its own initialization* (best 2.77). Bounding
-   the output via convex weights fixed this immediately.
-4. **Sequential finetuning forgets.** chairs → vkitti2 at lr 1e-4 lost the chairs
-   robustness (2.28 → 2.50). Mixed-dataset training is the identified fix.
-5. Remaining gap to v2: sub-pixel precision (1px accuracy 69.7–74.7% vs 77.6%).
-6. **PE ablation: null result (2026-07-10).** Adding Fourier sub-cell encoding to the
-   chairs recipe changed nothing (2.288 vs 2.275 EPE, 1px acc identical at 69.7%).
-   Clean falsification: the 1px gap is NOT missing positional signal. Remaining
-   hypotheses: (a) the 1/8 coarse flow bounds recoverable detail; (b) chairs' large
-   motions never supervise sub-pixel discrimination — test PE with vkitti2/mixed data.
-
-## 4. Compute: v2 vs v3 (RTX 4060 Laptop 8GB, fp16, 384×1248)
-
-| Metric | NeuFlow v2 | NeuFlow v3 |
-|---|---|---|
-| Parameters | 9.03 M | **7.83 M** |
-| Full-frame dense flow | **37.0 ms (27 FPS)** | 326 ms (3 FPS) |
-| Coarse pass (once per pair) | — | 32.9 ms |
-| Decode 800 queries | not possible | **1.6 ms** |
-| Decode 4,096 queries | not possible | 2.2 ms |
-| Sparse total (≤2k pts) | — | **~35 ms (~29 FPS)** |
-| Extra queries on same pair | full recompute (37 ms) | 1.6–2.2 ms |
-| Inference VRAM (sparse) | — | ~2.2 GB |
-
-**Video-pipeline throughput** (60 frames of a 640×360 YouTube stream, end-to-end,
-`scripts/benchmark_fps.py`): v3 sparse-800 **63.6 FPS** · v2 dense 60.3 FPS ·
-v3 + live motion boxes 47.1 FPS · v3 dense 5.8 FPS. At video resolution the sparse
-mode outpaces v2's full map while answering targeted questions.
-
-The operating point that matters for edge robotics: **v3 answers sparse queries at the
-same latency v2 needs for a full frame** — and any *additional* queries on an
-already-processed pair are ~200× cheaper than v2 recomputing. Dense v3 output is 8.8×
-slower than v2 and is not the intended use.
-
-**Objective scorecard** (better EPE at less compute, edge-capable):
-- Mean EPE better than v2: ✅ (2.183 vs 2.324, mixed training — 6% better)
-- Less compute for the sparse use case: ✅ (~35 ms, O(N), fewer params)
-- Sub-pixel precision parity: ~✅ within 1.2 points (76.4% vs 77.6%); 3px at parity (89.6 vs 89.8)
-- Edge-device validation (Jetson): pending — next after PE
-
-## 5. The query interface — exact numbers and how to use it
-
-**Query size.** A "query" is one continuous (x, y) coordinate. N is free: 1 (a single
-click) to H×W (dense). Reference points at 384×1248 input:
-
-| Mode | N | Share of dense | Decode cost |
-|---|---|---|---|
-| Single point (GUI click) | 1 | — | ~1.6 ms |
-| Registration demo | 800 | 0.17% | 1.6 ms |
-| Training supervision | 4,096 per image | 3.1% of a 256×512 crop | — |
-| Edge sweet spot | ≤2,048 | 0.4% | 1.6 ms (flat) |
-| Dense (full frame) | 479,232 | 100% | ~293 ms |
-
-Queries are continuous — (312.7, 188.2) is as valid as (312, 188); the decoder
-interpolates features bilinearly, so sub-pixel positions are first-class.
-
-**How to query (the entire API):**
-
-```python
-model = NeuFlow(use_implicit=True, head_mode='convex')          # + use_pe=True for PE checkpoints
-state = model.infer_coarse_state(img0, img1)                    # once per pair, ~33 ms
-flow  = model.decode_queries(state, query_coords=q)             # q: [B, N, 2] (x, y) pixels -> [B, N, 2]
-flow  = model.decode_queries(state, target_h=H, target_w=W)     # dense grid at ANY resolution
-flow  = model.decode_queries(state, adaptive_n=1000)            # auto-allocate at motion boundaries
-```
-
-**Interactive GUI** (`scripts/query_gui.py`, PyQt5 — all features self-tested offscreen):
-- Click-to-query with arrows/values; uniform grid; boundary-adaptive; dense overlay.
-- **Region query window**: drag-select a rectangle — flow is computed only inside it
-  (per-pixel within the window, auto-strided above 80k points).
-- **Video sources**: local files and YouTube URLs (via yt-dlp); N/P frame stepping.
-- **Real-time playback with motion detection**: Space plays the video through the
-  pipeline continuously; moving regions are boxed live from the coarse flow with the
-  median (ego-motion) subtracted — zero additional decode cost. ~39 FPS end-to-end on
-  the self-test clip at 1024-width.
-- **System resources tab**: live 2 Hz graphs of pipeline FPS, coarse-pass latency,
-  GPU utilization, VRAM, CPU, and RAM — VRAM stays flat during interaction, showing
-  the cached two-pass design at work.
-- CSV export of queries, screenshot save, checkpoint switching.
-The two-pass API is what makes all of this possible — v2 would need a full 37 ms
-recompute per interaction; v3 answers from cache in ~1.6 ms.
-
-**Training configuration (current):**
-
-| Parameter | Value |
+| Previous claim | Status |
 |---|---|
-| Batch size | 4 (VRAM-bound, RTX 4060 8 GB) |
-| Crop | 256×512 (VKITTI2) / 384×512 (chairs) |
-| Queries per image | 4,096 (50% at motion boundaries, 50% uniform, integer pixels) |
-| Datasets in use | VKITTI2 clone+5 variants (12,726 pairs) · FlyingChairs (22,232 pairs) |
-| Optimizer | AdamW, OneCycle peak 2e-4, wd 1e-4, clip 1.0, gamma 0.8 |
-| Steps | 15K (vkitti2_all) / 30K (chairs) · backbone frozen |
+| "v3 dense is faster than v2 (28 vs 36 ms)" | **Withdrawn.** Measured pre-BatchNorm-fix on other hardware. On the corrected pipeline v3 dense is 22.0 ms against v2's 19.6 ms, i.e. 12% *slower*. |
+| "v3 beats v2 by 6% on mean EPE" | **Withdrawn.** True only for models trained on VKITTI2 imagery v2 never saw. The like-for-like comparison is a tie. |
+| "MPI-Sintel adds nothing" | **Withdrawn.** Reverses sign between checkpoints (§5.3). |
+| "The uncertainty head improves EPE by 2.0%" | **Withdrawn as an accuracy claim.** Also reverses sign between checkpoints. Its *calibration* result stands. |
 
-## 6. Anticipated questions (first principles)
+Nothing below is an estimate unless explicitly labelled. Numbers without a label
+come from a full-set run recorded in `docs/V3DEV_LOG.md`.
 
-**Q: Why can flow be queried at continuous coordinates at all?**
-The feature maps are discrete, but bilinear interpolation makes them a continuous
-function of position, and the decoder is an MLP applied to that function. The
-composition is defined at every real-valued (x, y) — integer pixels are just the
-special case a dense map hard-codes.
+---
 
-**Q: Why freeze the backbone?**
-InfiniDepth stabilizes joint training over 800K steps on 8 GPUs. At our 15–30K-step
-budget the decoder chases shifting features and diverges (measured: EPE oscillating
-1.9→54 in early experiments). Frozen features = stationary target. It also means v3
-inherits v2's matching quality by construction.
+## 1. What the project is
 
-**Q: Why did training make things worse for weeks?**
-The original head predicted a correction scaled by image width (~1248×). To be
-harmless it had to output almost exactly zero; any noise became pixels of error. The
-convex head bounds outputs to blends of neighboring coarse-flow values — after this
-one change, the same recipe trained below its initialization for the first time.
+NeuFlow v2 (Zhang, Gupta, Jiang, Singh, arXiv:2408.10161) is a real-time optical
+flow network for edge devices: a shallow CNN backbone, cross-attention and global
+matching at 1/16, recurrent refinement (1 iteration at 1/16, 8 at 1/8) producing
+flow at 1/8 resolution, then a learned convex upsampler to full resolution.
 
-**Q: Why does FlyingChairs training beat VKITTI2 training on VKITTI2?**
-22k diverse pairs with large motions teach robustness; 12.7k frames from five driving
-scenes teach memorization. The error *tail* (occlusions, fast regions) dominates mean
-EPE, and chairs attacks exactly that. The 2.1k-frame version of this lesson was worse.
+v3 keeps all of that, frozen, and replaces only the upsampler with an **implicit
+decoder that answers flow queries at arbitrary continuous coordinates**:
 
-**Q: Is sparse output an approximation of dense?**
-No — identical function, fewer evaluation points. Verified: sparse queries match the
-dense map at the same coordinates to 0.00 px.
+- Two-phase API: `infer_coarse_state()` once per pair (16.6 ms), then
+  `decode_queries()` at 2.55 ms per batch of up to 2,048 points.
+- Convex head: the MLP predicts softmax weights over the 3×3 coarse-flow
+  neighbourhood plus a bilinear candidate, so output is a bounded blend and
+  cannot hallucinate unsupported motion. Zero-initialised, it reproduces bilinear
+  upsampling exactly (verified: 0.011 px max deviation).
+- Optional uncertainty channel: a per-query error scale `b` trained under a
+  Laplace likelihood.
+- 7.83 M parameters against v2's 9.03 M.
 
-**Q: If sparse is fast, why is dense v3 slow?**
-Dense means 479k MLP evaluations (~293 ms); v2's convex upsample is one fused conv
-(~4 ms). v3 wins when you need *some* points, not *all* points — which is the actual
-requirement in registration, tracking, and mapping.
+The intended consumers are registration and mapping, which need a few hundred
+correspondences at points they choose, not half a million they discard.
 
-**Q: What limits sub-pixel (1px) accuracy?**
-Measured answer: not missing positional signal — injecting Fourier sub-cell encoding
-changed nothing (2.288 vs 2.275 EPE, 1px acc identical). The remaining suspects are
-the 1/8 coarse flow itself bounding recoverable detail, and training data whose
-motions are too large to supervise sub-pixel discrimination (chairs). Testing PE with
-fine-motion data (vkitti2/mixed) separates the two.
+---
 
-**Q: Why batch size 4?**
-8 GB VRAM. The recipe is otherwise standard RAFT; on cluster GPUs batch 8–16 with the
-same settings is the expected scale-up.
+## 2. Evaluation protocol
 
-**Q: Can it output at higher resolution than the input?**
-Yes — query any grid (`target_h/w` are free). The Spring benchmark (GT at 2× input
-resolution) is the planned test only queryable decoders can take natively.
+VKITTI2 Scene18 + Scene20, **1,174 pairs, 460,573,660 valid pixels**, per-pixel
+metrics. Scenes 18 and 20 are excluded from all training sets. fp16, V100,
+384×1248 input, `--fast_dense --stride 2` unless stated.
 
-## 8. Repository organization
+All five training runs are generated from a single template
+(`hpc/make_sbatch.py`) so they are identical in seed (1234), batch size (16),
+learning rate (2e-4 OneCycle), loss weighting (γ=0.8), refinement schedule
+(1×s16 + 8×s8, matching evaluation), query count (4,096), and step count
+(100,000). Exactly one variable differs between any two.
 
+A 9-check pre-flight suite (`scripts/verify_pipeline.py`) runs on CPU and GPU
+before any training job and must pass: BatchNorm frozen, only decoder trainable,
+zero-init equals bilinear, sparse equals dense, uncertainty in both decode paths,
+stride-2 fidelity, and seed reproducibility.
+
+---
+
+## 3. Three defects that invalidated earlier results
+
+**3.1 Train/test leak.** VKITTI2 Scene18 and Scene20 were in both the training
+set and the evaluation set. Models were scored on frames they had trained on.
+Fixed by excluding them by default with a guard that raises unless
+`allow_val_scenes=True`; verified at both pair and frame level
+(`scripts/check_leak.py`, reports `OVERLAP 0`). VKITTI2's contribution to the
+training mix drops from 12,726 to 5,682 pairs as a result.
+
+**3.2 BatchNorm was never frozen.** BatchNorm updates `running_mean` and
+`running_var` on every forward pass in train mode regardless of
+`requires_grad=False`. Over 30K steps the "frozen" backbone drifted 7.4% on
+running_mean and 17.4% on running_var, changing the coarse flow by 0.350 px —
+roughly seven times the v3-vs-v2 difference being studied. So v3 was not sharing
+v2's front end at all. Fixed by `set_frozen_bn_eval()`; verified drift is exactly
+zero.
+
+**3.3 Runs differed in three variables at once.** The earlier four runs varied in
+dataset, batch size (12 vs 16) *and* refinement schedule (2,4 vs 1,8), while all
+were evaluated at (1,8) — so two of them had a train/eval mismatch. No comparison
+between them was valid. Fixed by generating all sbatch files from one template.
+
+---
+
+## 4. Accuracy
+
+| Configuration | Training data | EPE | 1px % | 3px % |
+|---|---|---|---|---|
+| **NeuFlow v2 (reference)** | FlyingThings (authors') | 2.324 | **77.63** | **89.80** |
+| v3 FlyingChairs | FlyingChairs | 2.286 | 71.30 | 87.57 |
+| v3 +VKITTI2 | + VKITTI2 Scene01/02/06 | 2.138 | 76.38 | 89.46 |
+| v3 +MPI-Sintel | + MPI-Sintel | 2.147 | 76.81 | 89.56 |
+| v3 +uncertainty head | same, uncertainty on | 2.104 | 76.88 | 89.61 |
+
+**Only the FlyingChairs row is a fair comparison with v2.** It contains no driving
+imagery, exactly as v2's training contained none. It scores 2.286 against 2.324 —
+a 1.6% difference, which is **a tie, not a win**.
+
+The other three train on VKITTI2 scenes from the same simulator and camera as the
+test scenes. Their better numbers measure domain advantage, not a better method,
+and are not presented as beating v2.
+
+### 4.1 The precision cost
+
+v3 is below v2 on 1-pixel accuracy in **every** configuration, by 0.8 to 6.3
+points. Mean EPE hides this: v3 makes fewer large errors, which pulls the mean
+down, while being less exact on the majority of pixels.
+
+Diagnosed cause: the decoder's finest input is at 1/8 resolution, so within an
+8×8 cell the evidence it sees barely changes. v2's upsampler reads the
+full-resolution frame directly. A Fourier positional encoding of the sub-cell
+offset was tried and changed nothing (2.288 vs 2.275 on the pre-fix runs, 1px
+identical), which **rules out missing positional signal** as the explanation and
+points at missing high-resolution *features*.
+
+---
+
+## 5. What this experiment can and cannot resolve
+
+Evaluating step 90,000 and step 100,000 of the **same four runs**:
+
+| Run | @90k | @100k | spread |
+|---|---|---|---|
+| FlyingChairs | 2.294 | 2.286 | 0.008 |
+| +VKITTI2 | 2.160 | 2.138 | 0.022 |
+| +MPI-Sintel | 2.109 | 2.147 | **0.038** |
+| +uncertainty | 2.120 | 2.104 | 0.016 |
+
+Between-checkpoint variation reaches 0.038 px, which is **the same size as the
+differences between runs**. Two orderings reverse:
+
+- MPI-Sintel helps at 90k (−0.051) and hurts at 100k (+0.009)
+- the uncertainty head hurts at 90k (+0.011) and helps at 100k (−0.043)
+
+With one seed and one checkpoint, **neither question is answerable**, and both
+claims are withdrawn. Resolving them needs multiple seeds and an average over
+late checkpoints.
+
+**What is robust at both checkpoints:** adding driving data to FlyingChairs gains
+about 0.15 px of EPE and 5 points of 1px accuracy. Everything finer sits inside
+the noise.
+
+---
+
+## 6. Speed
+
+| Mode | Latency | vs v2 |
+|---|---|---|
+| v2, full frame (its only mode) | **19.6 ms** | — |
+| v3 dense, stride 2 | 22.0 ms | **12% slower** |
+| v3 sparse, first query on a new pair | 19.16 ms | level |
+| **v3 sparse, repeat query on a cached pair** | **2.55 ms** | **7.7× cheaper** |
+
+Breakdown of the sparse path: coarse pass 16.61 ms (87%) + decode 2.55 ms (13%).
+The coarse pass is inherited from v2 and cannot be avoided — global matching needs
+whole-image context.
+
+Decode costs 2.553 ms at N=800 and 2.554 ms at N=2,048. Identical, so the decode
+is **kernel-launch-overhead bound, not compute bound**: 2,048 points cost the same
+as 800.
+
+**The only genuine speed win is the repeat query**, and it is structural rather
+than a margin: v2 holds no state between calls, so a second question about the
+same frame costs it a full recomputation.
+
+### 6.1 Identified but unimplemented speed work
+
+Estimates, not results: CUDA graphs on the decode path (launch-bound, so 2.55 →
+~0.5 ms plausible), `torch.compile` (measured 9% on an RTX 4060, zero accuracy
+cost), and fusing three of the four `grid_sample` calls (they share coordinates;
+exact). Together these would plausibly bring the first query to ~15.5 ms, i.e.
+faster than v2 rather than level.
+
+---
+
+## 7. Calibrated uncertainty
+
+Measured on `v3_FlyingChairs_VKITTI2_Sintel_uncertainty/step_100000`, 2,348,000
+samples:
+
+| Predicted b | Actual mean error |
+|---|---|
+| 0.01 – 0.11 | 0.313 px |
+| 0.11 – 0.20 | 0.504 px |
+| 0.20 – 0.41 | 0.807 px |
+| 0.41 – 1.22 | 1.652 px |
+| 1.22 + | 6.723 px |
+
+Monotonic across all five bins, a 21× span, Pearson r = 0.345. Not a strong
+correlation, but clearly informative and directly usable: weight correspondences
+in RANSAC, reject unreliable matches, or steer queries toward uncertain regions.
+
+**v2 emits flow only**, so there is no equivalent quantity to compare against.
+This is the clearest capability difference in the project, and unlike the accuracy
+claims it does not depend on a margin.
+
+---
+
+## 8. Honest scorecard
+
+| Objective | Verdict | Evidence |
+|---|---|---|
+| Better accuracy than v2 | **NOT MET** | fair comparison 2.286 vs 2.324, a tie; better numbers need in-domain data |
+| Less compute than v2 | **PARTLY** | dense 12% slower; first query level; repeat query 7.7× cheaper |
+| Runs on edge devices | **UNPROVEN** | all figures from V100 and RTX 4060; no Jetson measurement exists |
+
+**What the project does deliver, measured:**
+
+1. Flow at any continuous coordinate, with sparse output matching dense to
+   0.00057 px.
+2. Repeat queries on a cached frame at 2.55 ms against v2's 19.6 ms recomputation.
+3. A calibrated per-query confidence signal with no counterpart in v2.
+4. A working interactive tool: load a video, drag a region, get flow there, with
+   live cost breakdown (`scripts/video_region_gui.py`).
+
+---
+
+## 9. Limitations
+
+- **Sub-pixel precision is worse than v2** by 0.8–6.3 points of 1px accuracy.
+  Cause diagnosed, not fixed.
+- **No edge-device measurement.** "Edge" in the title is a design target.
+- **One evaluation domain.** All accuracy numbers are VKITTI2, a synthetic driving
+  benchmark. It says little about field or survey imagery.
+- **One seed, and checkpoint noise the size of the effects** (§5). Nothing finer
+  than ~0.05 px is resolvable.
+- **Spring run did not complete.** Timed out at 8 hours having reached step 50,000
+  of 100,000 (data loading on 1080p frames caps throughput at ~1.7 steps/s, so the
+  run needs ~16 h). Excluded, not reported as a data point.
+- **The fusion-on-grid approximation in `fast_dense` is larger than previously
+  documented**: 0.068 px mean and 22 px max against the exact per-query path
+  (measured 2026-08-02), not the "+0.02 px" recorded earlier. It does not harm
+  aggregate EPE, but it is an approximation and is now labelled as one.
+
+---
+
+## 10. Next steps, in priority order
+
+1. **Full-resolution stem.** Give the decoder a cheap full-resolution feature map
+   (~1–2 ms) so evidence varies within an 8×8 cell. Directly attacks the diagnosed
+   precision gap, and makes continuous querying substantively meaningful rather
+   than nominal.
+2. **Spring 4K evaluation** (`scripts/eval_spring_4k.py`, written and geometry-
+   verified). Spring provides ground truth at twice the input resolution: v3 can be
+   queried there natively, v2 can only be interpolated. A capability comparison
+   rather than a margin, and it does **not** require the Spring training run.
+3. **Free-FPS stack** (§6.1). Exact, no retraining, would convert "level with v2"
+   into "faster than v2".
+4. **Jetson measurement.** Converts the edge claim into a result or refutes it.
+5. **Field or survey imagery.** A registration demonstration on lab data would
+   test the actual intended use case.
+
+---
+
+## Appendix: reproducing any number here
+
+```bash
+python3 scripts/verify_pipeline.py                     # 9 pre-flight checks
+python3 scripts/check_leak.py --stage FlyingChairs+VKITTI2
+python3 scripts/eval_all_runs.py --fast_dense --stride 2
+python3 scripts/eval_calibration.py --checkpoint <uncertainty ckpt>
+python3 scripts/benchmark_sparse.py --checkpoint <ckpt> --head convex --n 800 2048
+python3 scripts/eval_spring_4k.py --check_units        # GT unit convention
 ```
-NeuFlow_v3/
-├── NeuFlow/                  model (implicit_decoder.py = the v3 contribution)
-├── data_utils/ utils/        loaders (chairs/things/sintel/kitti/vkitti2[_all]/viper), loss, DDP
-├── scripts/                  eval_vkitti2.py · benchmark_edge.py · demo_registration.py
-│                             stream_chairs_png.py (zip-less dataset acquisition)
-├── train_*.sh                one script per documented experiment
-├── checkpoints/<run>/        step_XXXXXX.pth + train_log.csv per run
-├── datasets/                 vkitti2 (37 GB, 10 variants) · FlyingChairs_release (46 GB, PNG)
-├── docs/
-│   ├── NeuFlow_v3_Report.md      ← this file (single source of truth with base_parameters.md)
-│   ├── base_parameters.md        parameter derivations + full result log
-│   ├── NeuFlow_v3_update.pptx    progress deck (2026-06-27, +baseline slide 07-09)
-│   ├── NeuFlow_v3_status.pptx    current status deck (2026-07-10)
-│   └── archive/                  superseded reports (report.pdf, proposal.pdf, meeting prep)
-└── results/                  charts + demo outputs
-```
 
-Branches: `v1-dev` = corrected metrics + paper-aligned recipe · `v2-dev` = convex head,
-curriculum, PE (current). Remote: github.com/shrirag10/Neuflowv3.
-
-## 8. Next steps
-
-1. ~~Fourier PE ablation~~ — done, null result; 1px gap is not positional.
-2. ~~Mixed chairs + vkitti2 training~~ — done: 2.183 EPE / 76.4% 1px, best result to date;
-   hypothesis confirmed (joint sampling prevents forgetting).
-3. **Jetson benchmark** — port `benchmark_edge.py`; the O(N) claim is strongest where
-   dense flow genuinely cannot run.
-4. Thesis framing unchanged: queryable flow for registration/mapping — one backbone
-   pass, on-demand correspondences at chosen points, arbitrary resolution.
+Full chronological record, including every failed attempt and its cause:
+`docs/V3DEV_LOG.md`.

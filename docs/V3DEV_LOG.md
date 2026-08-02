@@ -601,3 +601,42 @@ Honest reading: for a FIRST query on a new frame, v3 is not faster than v2
 per pixel than v2's convex upsampler. The genuine wins are (a) repeat queries on
 an already-processed frame, 6.0 ms against v2's full 13 ms recompute, and
 (b) CROP mode, where cost scales with the area actually requested.
+
+## 2026-08-02 -- Spring 4K eval script + two measurement corrections
+
+**scripts/eval_spring_4k.py**: queries v3 at 3840x2160 from 1920x1080 input and
+scores against Spring's native 4K ground truth, with v2 (1080p + bilinear
+upscale, its only option) as the baseline and "v3 at 1080p then upscaled" as the
+control that isolates native querying from interpolation. Includes --check_units,
+which verifies the GT scale convention empirically rather than trusting
+read_flo5's comment (the stored .flo5 is at 2x resolution in 4K pixel units).
+
+Geometry verified against the exact dense path: mean deviation 0.0057 px on flow
+of ~20 px magnitude, i.e. fp16 rounding. Queries at 2x resolution genuinely vary
+between input pixels (mean |diff| 0.091 px between on-pixel and between-pixel
+samples), so the finer grid is real output, not interpolation.
+
+**Correction 1: the fusion-on-grid approximation is bigger than documented.**
+Measured exact (fusion_on_grid=False) against approximate on a VKITTI2 pair:
+0.068 px MEAN, 22.3 px MAX, concentrated at motion boundaries (1.4% of pixels
+exceed 1 px). Previously recorded as "+0.02 px". It does not harm aggregate EPE
+-- fast_dense scored better than standard dense on the full set -- but the
+earlier figure understated it and every fast_dense number carries this
+approximation.
+
+**Correction 2: the Spring ETA was wrong, and it was my arithmetic.** I predicted
+the run would reach ~90k steps before the 8 h wall, using the instantaneous
+3.18 step/s from the progress bar. The sustained rate was ~1.74 step/s (visible
+in the very first sample: 1,808 steps in 18 min = 1.66/s). It TIMEOUT at
+08:00:20 having reached step 50,000, so it needs ~16 h. Cause is almost certainly
+data loading: Spring frames are 1920x1080, ~10x the pixels of FlyingChairs.
+Excluded from the results as incomparable (OneCycle only half annealed).
+
+Note the 4K evaluation does NOT depend on the Spring training run -- native
+querying above input resolution is a property of the decoder, not of the training
+data, so it can be run with any checkpoint.
+
+**docs/NeuFlow_v3_Report.md rewritten** against the leak-free results, mirroring
+the deck: withdrawn claims listed up front, methodology before results, the
+checkpoint-noise section, and an honest scorecard (accuracy NOT MET, compute
+PARTLY, edge UNPROVEN).
