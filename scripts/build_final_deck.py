@@ -1,22 +1,29 @@
-"""Build docs/NeuFlow_v3_status.pptx — complete rebuild, 2026-07-26.
+"""Build docs/NeuFlow_v3_status.pptx.
 
-Full revamp: linear narrative, every number sourced from docs/V3DEV_LOG.md,
-five new comparison plots (results/plots/), no half-finished sections.
+Rewritten 2026-08-02 against the leak-free runs. Every number traces to a run
+in docs/V3DEV_LOG.md. Claims the data does not support have been removed:
+
+  - "v3 dense is faster than v2"  -> FALSE on the corrected pipeline
+    (22.0 ms vs 19.6 ms). Was measured pre-BatchNorm-fix on other hardware.
+  - "v3 beats v2 by 6% on EPE"    -> only with VKITTI2 in training, which v2
+    never saw. The clean comparison is a tie on mean EPE and a loss on precision.
+
 Monochrome academic style (Georgia, black/gray/white, thin rules).
 """
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pptx import Presentation
-from pptx.util import Inches, Pt, Emu
+from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
-from lxml import etree
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.enum.text import PP_ALIGN
 
 INK    = RGBColor(0x1A, 0x1A, 0x1A)
 ACCENT = RGBColor(0x33, 0x33, 0x33)
 MUTED  = RGBColor(0x8A, 0x8A, 0x8A)
+GOOD   = RGBColor(0x0B, 0x6A, 0x63)
+WARN   = RGBColor(0xB0, 0x30, 0x30)
 BOX_DK = RGBColor(0x33, 0x33, 0x33)
 BOX_LT = RGBColor(0xEF, 0xEF, 0xEF)
 WHITE  = RGBColor(0xFF, 0xFF, 0xFF)
@@ -24,7 +31,8 @@ FONT   = 'Georgia'
 OUT    = 'docs/NeuFlow_v3_status.pptx'
 
 
-def add_text(s, x, y, w, h, text, size, bold=False, color=INK, line_spacing=1.0, align=PP_ALIGN.LEFT):
+def add_text(s, x, y, w, h, text, size, bold=False, color=INK,
+             line_spacing=1.0, align=PP_ALIGN.LEFT):
     tb = s.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
     tf = tb.text_frame
     tf.word_wrap = True
@@ -47,477 +55,543 @@ def header(s, kicker, title):
 
 
 def footer(s, num):
-    add_text(s, 0.75, 7.02, 8.0, 0.30, 'NeuFlow v3, S. Srinivasan', 9, False, MUTED)
+    add_text(s, 0.75, 7.02, 8.0, 0.30, 'NeuFlow v3, S. Raghav Srinivasan', 9, False, MUTED)
     add_text(s, 11.60, 7.02, 1.20, 0.30, str(num), 9, False, MUTED)
 
 
 def note(s, text):
-    """Attach speaker/talking notes to a slide (visible in Presenter view)."""
     s.notes_slide.notes_text_frame.text = text
 
 
-def box(s, x, y, w, h, text, dark=False, size=10, dashed=False):
-    shp = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
-    shp.adjustments[0] = 0.12
-    shp.fill.solid()
-    shp.fill.fore_color.rgb = BOX_DK if dark else BOX_LT
-    shp.line.color.rgb = INK
-    shp.line.width = Pt(1.0)
-    if dashed:
-        ln = shp.line._get_or_add_ln()
-        d = etree.SubElement(ln, '{http://schemas.openxmlformats.org/drawingml/2006/main}prstDash')
-        d.set('val', 'dash')
-        shp.fill.background()
-    tf = shp.text_frame
-    tf.word_wrap = True
-    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-    tf.margin_left = tf.margin_right = Emu(27432)
-    tf.margin_top = tf.margin_bottom = Emu(9144)
+def rule(s, y, x0=0.75, x1=12.6, color=MUTED):
+    ln = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x0), Inches(y),
+                            Inches(x1 - x0), Pt(0.75))
+    ln.fill.solid(); ln.fill.fore_color.rgb = color
+    ln.line.fill.background(); ln.shadow.inherit = False
+
+
+def chip(s, x, y, w, h, text, size=10.5, fill=BOX_LT, fg=INK, bold=False):
+    b = s.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y),
+                           Inches(w), Inches(h))
+    b.fill.solid(); b.fill.fore_color.rgb = fill
+    b.line.color.rgb = MUTED; b.line.width = Pt(0.75)
+    b.shadow.inherit = False
+    tf = b.text_frame; tf.word_wrap = True
+    tf.margin_left = tf.margin_right = Inches(0.08)
     for i, line in enumerate(text.split('\n')):
-        para = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
-        para.alignment = PP_ALIGN.CENTER
-        r = para.add_run()
-        r.text = line
-        r.font.name = FONT
-        r.font.size = Pt(size)
-        r.font.bold = dark
-        r.font.color.rgb = WHITE if dark else INK
-    return shp
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run(); r.text = line
+        r.font.name = FONT; r.font.size = Pt(size); r.font.bold = bold
+        r.font.color.rgb = fg
+    return b
 
 
-def arrow(s, x1, y1, x2, y2):
-    conn = s.shapes.add_connector(MSO_CONNECTOR.STRAIGHT, Inches(x1), Inches(y1), Inches(x2), Inches(y2))
-    conn.line.color.rgb = INK
-    conn.line.width = Pt(1.4)
-    ln = conn.line._get_or_add_ln()
-    tail = etree.SubElement(ln, '{http://schemas.openxmlformats.org/drawingml/2006/main}tailEnd')
-    tail.set('type', 'triangle')
-    tail.set('w', 'med')
-    tail.set('len', 'med')
-    return conn
-
-
-def framed_pic(s, path, x, y, w, h):
-    s.shapes.add_picture(path, Inches(x), Inches(y), width=Inches(w), height=Inches(h))
-    fr = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
-    fr.fill.background()
-    fr.line.color.rgb = INK
-    fr.line.width = Pt(1.2)
-    fr.shadow.inherit = False
-
-
-def scene_grid(s, panels):
-    W, H = 5.75, 1.74
-    pos = [(0.75, 1.95), (6.85, 1.95), (0.75, 4.28), (6.85, 4.28)]
-    for (path, label), (x, y) in zip(panels, pos):
-        add_text(s, x, y - 0.32, W, 0.3, label, 11, True, INK)
-        framed_pic(s, path, x, y, W, H)
+def table(s, x, y, rows, col_w, size=10.5, header_rows=1, hl_row=None):
+    """Plain text table: rows = list of lists of strings."""
+    yy = y
+    for ri, row in enumerate(rows):
+        xx = x
+        bold = ri < header_rows
+        color = INK
+        if hl_row is not None and ri == hl_row:
+            bold = True; color = GOOD
+        for ci, cell in enumerate(row):
+            al = PP_ALIGN.LEFT if ci == 0 else PP_ALIGN.RIGHT
+            add_text(s, xx, yy, col_w[ci], 0.26, cell, size, bold, color, align=al)
+            xx += col_w[ci]
+        if ri < header_rows:
+            rule(s, yy + 0.26, x, x + sum(col_w))
+        yy += 0.30
+    return yy
 
 
 def main():
-    p = Presentation()
-    p.slide_width = Inches(13.333)
-    p.slide_height = Inches(7.5)
-    blank = p.slide_layouts[6]
-    counter = [0]
+    prs = Presentation()
+    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+    blank = prs.slide_layouts[6]
+    n = [0]
 
     def slide():
-        counter[0] += 1
-        return p.slides.add_slide(blank), counter[0]
+        n[0] += 1
+        return prs.slides.add_slide(blank), n[0]
 
-    # ============================================ 1 · Title
+    # ============================================================ 1 title
     s, i = slide()
-    add_text(s, 0.9, 2.5, 11.5, 1.0, 'NeuFlow v3', 40, True, INK)
-    add_text(s, 0.9, 3.35, 11.5, 0.5, 'Queryable optical flow for edge devices', 18, False, ACCENT)
-    add_text(s, 0.9, 4.0, 11.5, 0.9,
-             'Status update. NeuFlow v2 backbone (frozen) + an implicit decoder that answers\n'
-             'flow queries at arbitrary coordinates in O(N).', 13, False, INK, line_spacing=1.2)
-    add_text(s, 0.9, 6.6, 11.5, 0.4, 'Shriman Raghav Srinivasan, MS Robotics, Northeastern University, Field Robotics Lab', 11, False, MUTED)
-
-    # ============================================ 2 · Motivation
-    s, i = slide()
-    header(s, 'MOTIVATION', 'Why query optical flow?')
-    add_text(s, 0.75, 1.65, 5.7, 4.8,
-             'Optical flow tells you where each pixel in frame t moves\n'
-             'to in frame t+1.\n\n'
-             'Current networks always output the full dense map, at a\n'
-             'fixed resolution. Many tasks never use most of it:\n\n'
-             '-  registration wants a few hundred correspondences at\n'
-             '    points it picks itself (corners, texture)\n'
-             '-  sparse tracking only needs flow at feature points\n'
-             '-  mosaicking needs matches in overlap regions, ideally\n'
-             '    at sub-pixel positions\n\n'
-             'On a small GPU, computing 479k values to use 800 of them\n'
-             'is the difference between real time and not.', 13, False, INK, line_spacing=1.15)
-    add_text(s, 6.85, 1.65, 5.7, 4.8,
-             'Idea\n\n'
-             'Keep everything in NeuFlow v2 that understands motion\n'
-             '(backbone, matching, refinement), frozen.\n\n'
-             'Swap only the last stage: instead of an upsampler that\n'
-             'always produces the full map, use a decoder that returns\n'
-             'flow at whatever coordinates you ask for.\n\n'
-             'Cost then scales with the number of queries, O(N),\n'
-             'instead of image area, O(HxW).', 13, False, INK, line_spacing=1.15)
+    add_text(s, 0.9, 2.15, 11.5, 1.0, 'NeuFlow v3', 44, True, INK)
+    add_text(s, 0.95, 3.15, 11.5, 0.5,
+             'A queryable, uncertainty-aware flow decoder for edge robotics', 17, False, ACCENT)
+    rule(s, 3.85, 0.95, 7.4)
+    add_text(s, 0.95, 4.05, 11.0, 1.0,
+             'One frozen NeuFlow v2 backbone, its fixed upsampler replaced by a decoder that\n'
+             'answers flow queries at arbitrary continuous coordinates in O(N).', 12.5, False, INK)
+    add_text(s, 0.95, 6.25, 11.0, 0.4,
+             'Shriman Raghav Srinivasan   ·   MS Robotics, Northeastern University   ·   '
+             'Field Robotics Lab   ·   August 2026', 11, False, MUTED)
+    note(s, "This is a status report on my thesis project. I want to be upfront that the "
+            "headline has changed since the last version of this deck. Earlier numbers were "
+            "contaminated by a train-test leak and by a BatchNorm bug, and when I fixed both, "
+            "two of my claims did not survive. I will show you what did survive and what did "
+            "not, and I will be explicit about which comparisons are fair.")
     footer(s, i)
 
-    # ============================================ 3 · Method: v2 pipeline
+    # ============================================================ 2 motivation
     s, i = slide()
-    header(s, 'METHOD', 'NeuFlow v2: what stays, frozen and untouched')
-    boxes = [
-        (0.75, 1.9, 'Image pair'),
-        (2.85, 1.9, 'CNN backbone\n(1/8, 1/16 features)'),
-        (5.35, 1.9, 'Cross-attention\n+ global matching'),
-        (7.95, 1.9, 'Refine x1 (1/16)\nRefine x8 (1/8)'),
-        (10.55, 1.9, 'Coarse flow\n(1/8 resolution)'),
+    header(s, 'MOTIVATION', 'Most tasks never use most of a dense flow map')
+    add_text(s, 0.75, 1.75, 5.6, 3.4,
+             'Optical flow tells you where each pixel moves between two frames.\n\n'
+             'Every modern network computes all of them, at one fixed resolution.\n'
+             'A lot of downstream work does not need that:\n\n'
+             '   image registration wants a few hundred correspondences at\n'
+             '   points it chooses itself\n\n'
+             '   sparse tracking needs flow at feature points only\n\n'
+             '   survey mosaicking needs matches in overlap regions, often at\n'
+             '   sub-pixel positions\n\n'
+             'On a small GPU, computing 479,232 values to use 800 of them is\n'
+             'the difference between real time and not.', 12, False, INK, 1.15)
+    chip(s, 7.0, 1.85, 5.6, 1.35,
+         'The question\n\nCan the final stage be replaced by something you query,\n'
+         'without giving up accuracy or speed?', 12)
+    add_text(s, 7.0, 3.5, 5.6, 2.6,
+             'Keep everything in v2 that understands motion, frozen.\n'
+             'Replace only the upsampler with a decoder evaluated at requested\n'
+             'coordinates, so cost scales with the number of questions asked\n'
+             'rather than with image area.\n\n'
+             'This report answers that question with measurements, including\n'
+             'the places where the answer is no.', 12, False, INK, 1.15)
+    note(s, "The motivation is unchanged and I still believe it. Dense flow is the only "
+            "product these networks offer, but registration, tracking and mapping all want a "
+            "few hundred points that they choose. The question is whether you can make the "
+            "output queryable without paying for it elsewhere. Some of the answer is no, and "
+            "I will show you where.")
+    footer(s, i)
+
+    # ============================================================ 3 v2 foundation
+    s, i = slide()
+    header(s, 'METHOD', 'NeuFlow v2: the foundation, kept frozen')
+    xs = [0.75, 3.3, 5.85, 8.4, 10.95]
+    labels = ['Image pair\n\ntwo frames',
+              'CNN backbone\n\nfeatures at\n1/8 and 1/16',
+              'Cross-attention\n+ global match\n\ninitial flow',
+              'Refinement\n\n1x at 1/16\n8x at 1/8',
+              'Coarse flow\n\nat 1/8\nresolution']
+    for x, lb in zip(xs, labels):
+        chip(s, x, 1.95, 2.2, 1.35, lb, 10.5, BOX_LT if x != xs[-1] else BOX_DK,
+             INK if x != xs[-1] else WHITE, bold=(x == xs[-1]))
+    for x in xs[:-1]:
+        add_text(s, x + 2.22, 2.42, 0.3, 0.3, '>', 15, True, MUTED)
+    add_text(s, 0.75, 3.65, 11.9, 0.45,
+             'All of the above is v2, unmodified, with its weights frozen. v3 replaces only what comes next.',
+             12, False, INK)
+    rows = [['Measured on our hardware (V100, fp16, 384x1248)', ''],
+            ['Latency, full frame', '19.6 ms'],
+            ['Parameters', '9.03 M'],
+            ['Mean EPE, VKITTI2 Scene18+20', '2.324 px'],
+            ['Pixels within 1 px', '77.63%']]
+    table(s, 0.75, 4.3, rows, [4.6, 1.5], 11.5)
+    chip(s, 7.0, 4.35, 5.6, 1.5,
+         'The structural limit\n\nOutput resolution and cost are fixed at design time.\n'
+         'There is no cheap way to ask a smaller question, and no\n'
+         'way at all to ask a finer-resolution one.', 11.5)
+    note(s, "NeuFlow v2 is the lab's real-time flow network. Backbone, matching, refinement, "
+            "then a convex upsampler that turns 1/8 resolution flow into full resolution. I "
+            "freeze everything up to the coarse flow and change only the last stage. On our "
+            "V100 it runs a full frame in 19.6 milliseconds at 2.324 pixels of error. Its "
+            "limitation is structural: the output is always the same size and always costs the "
+            "same, whether you need one pixel or all of them.")
+    footer(s, i)
+
+    # ============================================================ 4 what v3 changes
+    s, i = slide()
+    header(s, 'METHOD', 'What v3 changes: a decoder you query')
+    add_text(s, 0.75, 1.7, 11.9, 0.4,
+             'Phase 1, once per frame pair (17 ms, all of v2, cached)', 11.5, True, ACCENT)
+    chip(s, 0.75, 2.1, 11.85, 0.6, 'frozen v2 backbone  ->  coarse flow + feature maps, held in memory',
+         11.5, BOX_LT)
+    add_text(s, 0.75, 2.95, 11.9, 0.4,
+             'Phase 2, once per query batch (2.6 ms for up to 2,048 points, O(N))', 11.5, True, ACCENT)
+    xs = [0.75, 3.15, 5.55, 7.95, 10.35]
+    labs = ['Query (x, y)\n\nany continuous\ncoordinate',
+            'Sample features\n\n3x3 windows,\n4 sources',
+            'Fuse + head\n\ngated MLP',
+            'Convex blend\n\nweights over 9\ncandidates + 1',
+            'Flow + b\n\nper-point flow\nand confidence']
+    for x, lb in zip(xs, labs):
+        chip(s, x, 3.35, 2.15, 1.3, lb, 10.5,
+             BOX_DK if x == xs[-1] else BOX_LT, WHITE if x == xs[-1] else INK,
+             bold=(x == xs[-1]))
+    for x in xs[:-1]:
+        add_text(s, x + 2.17, 3.78, 0.3, 0.3, '>', 15, True, MUTED)
+    add_text(s, 0.75, 5.0, 11.9, 1.5,
+             'Three properties follow. Queries are continuous, so (312.7, 188.2) is as valid as (312, 188).\n'
+             'The output is a convex blend of neighbouring coarse-flow values, so it cannot invent motion\n'
+             'that is not locally supported. And the cached state means a second query batch on the same\n'
+             'frame costs 2.6 ms rather than a full recomputation.', 12, False, INK, 1.2)
+    note(s, "The change is only in the last stage. Phase one is v2 exactly as it is, run once "
+            "and cached. Phase two takes a coordinate, samples feature windows around it, and "
+            "predicts weights that blend the nine neighbouring coarse flow values plus a "
+            "bilinear one. Because it is a convex blend it cannot hallucinate motion. And "
+            "because phase one is cached, asking a second question about the same frame is "
+            "cheap. That caching is the property that turns out to matter most.")
+    footer(s, i)
+
+    # ============================================================ 5 methodology
+    s, i = slide()
+    header(s, 'METHODOLOGY', 'What I fixed before trusting any of these numbers')
+    add_text(s, 0.75, 1.65, 11.9, 0.4,
+             'An earlier version of this deck reported better results. Those numbers were wrong. '
+             'Three defects:', 12, False, INK)
+    rows = [
+        ['Defect', 'Effect', 'Fix'],
+        ['Train/test leak: VKITTI2 Scene18 and 20',
+         'models trained on the', 'val scenes excluded;'],
+        ['were in both training and evaluation',
+         'frames they were scored on', 'checked at pair and frame level'],
+        ['', '', ''],
+        ['BatchNorm updated running statistics',
+         'the "frozen" backbone drifted', 'BN held in eval mode;'],
+        ['in train mode despite requires_grad=False',
+         '0.35 px, 7x the effect studied', 'verified drift is exactly 0'],
+        ['', '', ''],
+        ['Runs differed in three variables at once',
+         'no comparison between them', 'all runs generated from one'],
+        ['(data, batch size, refinement schedule)',
+         'was valid', 'template; one variable each'],
     ]
-    for x, y, t in boxes:
-        box(s, x, y, 2.0, 0.9, t, size=10.5)
-    for k in range(len(boxes) - 1):
-        arrow(s, boxes[k][0] + 2.0, boxes[k][1] + 0.45, boxes[k+1][0], boxes[k+1][1] + 0.45)
-    add_text(s, 0.75, 3.2, 11.8, 0.35, 'Every block above is frozen in v3 -- identical weights, identical computation.', 12.5, True, INK)
-    add_text(s, 0.75, 3.75, 11.8, 3.0,
-             'NeuFlow v2 (Zhang, Gupta, Jiang, Singh, arXiv:2408.10161) is a real-time flow network\n'
-             'built for edge devices:\n\n'
-             '1.  Shallow CNN, features at 1/8 and 1/16\n'
-             '2.  Cross-attention + global matching at 1/16 for the initial flow\n'
-             '3.  Light recurrent refinement: 1 iteration at 1/16, 8 at 1/8\n'
-             '4.  (v2 only) Learned convex upsampler: each output pixel is a blend of a 3x3\n'
-             '     neighborhood of the 1/8 flow -- this last step is what v3 replaces.\n\n'
-             'v2 alone: 9.03M parameters, 19.6 ms per frame pair (V100, 384x1248), 2.324 px\n'
-             'mean EPE on VKITTI2. Its structural limit: output resolution and cost are fixed\n'
-             'at design time -- no cheap way to ask a smaller question, no way to ask a finer one.', 12.5, False, INK, line_spacing=1.15)
+    table(s, 0.75, 2.25, rows, [5.3, 3.5, 3.1], 10.5)
+    chip(s, 0.75, 5.35, 11.85, 1.1,
+         'Everything from here on: 1,174 held-out pairs, 460M pixels, per-pixel metrics, seed 1234, '
+         'identical hyperparameters.\nA 9-check pre-flight suite (scripts/verify_pipeline.py) passes on '
+         'CPU and GPU before any training run starts.', 11.5)
+    note(s, "I want to spend a slide on this because it is the reason to believe anything that "
+            "follows. Three defects. First, a train-test leak: two VKITTI2 scenes were in both "
+            "the training set and the evaluation set, so models were being scored on frames "
+            "they had trained on. Second, BatchNorm kept updating its running statistics even "
+            "though the backbone was supposed to be frozen, which moved the coarse flow by 0.35 "
+            "pixels, about seven times the effect I was trying to measure. Third, my runs "
+            "differed in three things at once, so no comparison between them meant anything. "
+            "All three are fixed, and there is now a pre-flight suite that checks all of it "
+            "before a job starts.")
     footer(s, i)
 
-    # ============================================ 4 · Method: v3 decoder + pseudocode
+    # ============================================================ 6 accuracy
     s, i = slide()
-    header(s, 'METHOD', 'What v3 adds: a queryable decoder instead of the upsampler')
-    add_text(s, 0.75, 1.6, 11.8, 0.3, 'Per query: sample features at (x, y), blend a bounded set of candidates', 12.5, True, INK)
-    code = ('# ONCE per image pair (~16-17 ms, V100, 384x1248)\n'
-            'coarse_flow, features = v2_pipeline(img0, img1)      # frozen, unchanged\n\n'
-            '# PER QUERY BATCH (~2.6 ms for up to ~2,000 points)\n'
-            'for each query (x, y):                                # continuous coords\n'
-            '    feat = sample(features, x, y)                     # bilinear, 260-d\n'
-            '    weights, [b] = decoder_head(feat)                 # softmax + optional log-scale\n'
-            '    candidates = 3x3 coarse-flow window + bilinear value\n'
-            '    flow = sum(weights * candidates)                  # bounded convex blend\n'
-            'return flow, [b]                                       # b = predicted error (option G)')
-    tb = s.shapes.add_textbox(Inches(0.9), Inches(2.0), Inches(11.5), Inches(2.2))
-    tf = tb.text_frame
-    tf.word_wrap = True
-    for j, line in enumerate(code.split('\n')):
-        para = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-        r = para.add_run(); r.text = line
-        r.font.name = 'Consolas'; r.font.size = Pt(11)
-        r.font.color.rgb = INK
-        if line.lstrip().startswith('#'):
-            r.font.bold = True
-    add_text(s, 0.75, 4.35, 11.8, 2.5,
-             'The head outputs weights over a 3x3 neighborhood of the coarse flow plus a bilinear\n'
-             'candidate, softmax-blended -- bounded by construction, so it cannot hallucinate large\n'
-             'flow. Zero-initialized so an untrained decoder reproduces plain bilinear upsampling\n'
-             'exactly (verified: 2.476 px EPE at step 0, full validation set).\n\n'
-             'Two-pass API: infer_coarse_state() once per frame, decode_queries() per query batch.\n'
-             'Sparse output matches dense output at the same points exactly -- verified to 0.00 px.\n'
-             'v3 has fewer parameters than v2 (7.83M vs 9.03M) despite adding this capability.', 12.5, False, INK, line_spacing=1.15)
+    header(s, 'RESULTS', 'Accuracy: the fair comparison is a tie')
+    s.shapes.add_picture('results/plots/accuracy_bars.png', Inches(0.8), Inches(1.6),
+                         width=Inches(7.3))
+    add_text(s, 8.4, 1.75, 4.3, 3.6,
+             'Only the FlyingChairs run is a like-for-like\n'
+             'comparison with v2: it never saw driving\n'
+             'imagery, exactly as v2 never did.\n\n'
+             'It scores 2.286 against v2 at 2.324.\n'
+             'A 1.6% difference is a tie, not a win.\n\n'
+             'The other three train on VKITTI2 imagery\n'
+             'from the same simulator and camera as the\n'
+             'test scenes. Their better numbers measure\n'
+             'domain advantage, not a better method,\n'
+             'and I do not present them as beating v2.', 11.5, False, INK, 1.18)
+    chip(s, 8.4, 5.45, 4.3, 0.95,
+         'Best overall: 2.104 px\nwith uncertainty head,\ntrained on FlyingChairs + VKITTI2 + Sintel',
+         10.5, BOX_LT)
+    note(s, "Here is the accuracy picture. The teal bar is the only fair comparison, because "
+            "that model trained on FlyingChairs alone and never saw a road, just as v2 never "
+            "saw VKITTI2. It gets 2.286 against v2's 2.324. That is a tie. The grey bars are "
+            "better, down to 2.104, but they trained on VKITTI2 scenes from the same simulator "
+            "as the test set, so that is a domain advantage rather than a better method. I "
+            "could have shown you only the 2.104 number and claimed a ten percent win. It "
+            "would not have been honest.")
     footer(s, i)
 
-    # ============================================ 5 · Results: training curriculum
+    # ============================================================ 7 precision cost
     s, i = slide()
-    header(s, 'RESULTS', 'The full training curriculum, in order')
-    s.shapes.add_picture('results/plots/curriculum_epe.png', Inches(0.6), Inches(1.55), width=Inches(12.1))
-    add_text(s, 0.75, 6.7, 11.8, 0.7,
-             'Every configuration tried, worst to best. Local runs (RTX 4060, batch 4) established the\n'
-             'recipe; HPC runs (Explorer cluster, batch 16, 100K steps) scaled it. big18 is the best full run.', 11.5, False, INK)
+    header(s, 'RESULTS', 'The cost: sub-pixel precision, unresolved')
+    s.shapes.add_picture('results/plots/precision_bars.png', Inches(0.8), Inches(1.6),
+                         width=Inches(7.3))
+    add_text(s, 8.4, 1.75, 4.3, 4.2,
+             'v3 sits below v2 on 1-pixel accuracy in\n'
+             'every configuration, by 0.8 to 6.3 points.\n\n'
+             'Mean EPE hides this: v3 has fewer large\n'
+             'errors, which pulls the mean down, while\n'
+             'being less exact on the majority of pixels.\n\n'
+             'Diagnosed cause: the decoder never sees\n'
+             'the full-resolution image. Its finest input\n'
+             'is at 1/8 scale, so within an 8x8 cell the\n'
+             'evidence barely changes. v2 upsampler\n'
+             'reads the full-resolution frame directly.\n\n'
+             'A Fourier positional encoding was tried\n'
+             'and made no difference, which rules out\n'
+             'missing positional signal as the cause.', 11.5, False, INK, 1.18)
+    note(s, "This is the honest cost. On one-pixel accuracy v3 is below v2 everywhere, by up "
+            "to six points. Mean error hides it, because v3 makes fewer catastrophic errors, "
+            "which drags the average down while it is actually less precise on most pixels. I "
+            "know the cause: the decoder's finest input is at one-eighth resolution, so inside "
+            "an eight by eight cell it is looking at almost the same evidence wherever you "
+            "query. The v2 upsampler reads the full resolution image directly. I tested whether "
+            "it was simply missing positional information by adding a Fourier encoding, and it "
+            "changed nothing, which rules that explanation out.")
     footer(s, i)
 
-    # ============================================ 6 · Results: precision
+    # ============================================================ 8 speed
     s, i = slide()
-    header(s, 'RESULTS', 'Precision: closing the sub-pixel gap')
-    s.shapes.add_picture('results/plots/precision_bars.png', Inches(2.58), Inches(1.55), width=Inches(8.18))
-    add_text(s, 0.75, 6.6, 11.8, 0.7,
-             'uncG (uncertainty head) is the first v3 checkpoint to beat v2 on 3px accuracy (90.02 vs\n'
-             '89.8) and nearly closes the 1px gap (77.51 vs 77.6 -- 0.09 points, within measurement noise).', 11.5, False, INK)
+    header(s, 'RESULTS', 'Speed: one real win, and a claim I withdrew')
+    s.shapes.add_picture('results/plots/speed_bars.png', Inches(1.3), Inches(1.6),
+                         width=Inches(8.1))
+    add_text(s, 9.7, 1.8, 3.1, 3.0,
+             'Dense: v3 is 12% slower\nthan v2. An earlier version\nof this deck claimed the\n'
+             'opposite. That measurement\npredated the BatchNorm fix\nand used different\n'
+             'hardware. Withdrawn.\n\n'
+             'First sparse query: level\nwith v2, not faster.', 11.5, False, INK, 1.18)
+    chip(s, 9.7, 5.0, 3.1, 1.4,
+         'The genuine win\n\nA second query on an\nalready-processed frame:\n2.6 ms against 19.6 ms.\n'
+         'v2 has no cached state.', 10.5, BOX_LT, GOOD, bold=False)
+    note(s, "Speed. Three of these four bars are not wins. Dense v3 is twelve percent slower "
+            "than v2, and I want to flag that an earlier version of this deck claimed v3 dense "
+            "was faster. That measurement was taken before the BatchNorm fix and on a different "
+            "GPU. It was wrong and I have withdrawn it. A first sparse query is level with v2, "
+            "not faster, because the coarse pass dominates and you cannot avoid it. The real "
+            "win is the fourth bar: asking a second question about a frame you have already "
+            "processed costs 2.6 milliseconds against v2's 19.6, because v2 has no cached "
+            "state and must redo everything. That is structural, not a margin.")
     footer(s, i)
 
-    # ============================================ 7 · Results: visual comparison
+    # ============================================================ 9 ablations
     s, i = slide()
-    header(s, 'RESULTS', 'Same scene, four checkpoints, all beating v2 on EPE')
-    scene_grid(s, [
-        ('results/panels_hpc/scene_v2.png', 'NeuFlow v2, EPE 2.324 (full set) / 2.111 (this scene)'),
-        ('results/panels_hpc/scene_v3_grandmix.png', 'v3 grandmix, EPE 2.166 (full set) / 2.077 (this scene)'),
-        ('results/panels_hpc/scene_v3_big18.png', 'v3 big18, EPE 2.072 (full set, best) / 2.089 (this scene)'),
-        ('results/panels_hpc/scene_v3_uncG.png', 'v3 uncG, EPE 2.082 (full set) / 2.053 (this scene, best here)'),
-    ])
-    add_text(s, 0.75, 6.35, 11.9, 0.75,
-             'Batch 16, 100K steps, H200/V100 (Explorer cluster). All three HPC checkpoints beat v2\n'
-             'on mean EPE, on the full 1,174-pair validation set, not just this one scene.', 11.5, False, INK)
+    header(s, 'RESULTS', 'Two clean single-variable ablations')
+    s.shapes.add_picture('results/plots/ablations.png', Inches(1.15), Inches(1.7),
+                         width=Inches(9.6))
+    add_text(s, 0.75, 5.75, 11.9, 1.0,
+             'Both pairs are identical in seed, schedule and every hyperparameter; one thing changes.\n'
+             'Adding MPI-Sintel to the mix costs 0.4% despite 10,410 extra pairs, so it does not earn its place.\n'
+             'The uncertainty head gains 2.0% while also producing a confidence value, so it is kept.',
+             12, False, INK, 1.2)
+    note(s, "These two are the cleanest results in the project, because everything is held "
+            "fixed except one thing. On the left, adding MPI-Sintel to the training mix made it "
+            "slightly worse despite ten thousand extra pairs, so Sintel does not earn its "
+            "place. On the right, adding the uncertainty head improved accuracy by two percent "
+            "on identical data. That is a free gain from an auxiliary loss acting as a "
+            "regulariser, and it also gives you a confidence signal, which is the next slide.")
     footer(s, i)
 
-    # ============================================ 8 · Results: speed
+    # ============================================================ 10 calibration
     s, i = slide()
-    header(s, 'RESULTS', 'Speed: the real deployment argument')
-    s.shapes.add_picture('results/plots/speed_bars.png', Inches(3.0), Inches(1.5), width=Inches(7.3))
-    add_text(s, 0.75, 6.15, 11.8, 0.9,
-             'Measured on identical V100 hardware. The pitch is not "6% better EPE" -- it is that v2\n'
-             'pays the full 19.6 ms on every single call, while v3 pays a similar cost once per frame\n'
-             'and then answers follow-up queries on that same frame for ~2.6 ms each.', 11.5, False, INK)
+    header(s, 'RESULTS', 'A calibrated confidence signal v2 cannot express')
+    s.shapes.add_picture('results/plots/calibration_bars.png', Inches(0.8), Inches(1.7),
+                         width=Inches(7.4))
+    add_text(s, 8.5, 1.85, 4.2, 3.6,
+             'The head predicts a per-query error\n'
+             'scale b alongside each flow value,\n'
+             'trained with a Laplace likelihood.\n\n'
+             'Binned by predicted b, real error rises\n'
+             'monotonically from 0.22 px to 7.38 px.\n'
+             'Pearson r = 0.38 over 2.35M samples.\n\n'
+             'This is usable: weight correspondences\n'
+             'in RANSAC, reject unreliable matches,\n'
+             'or steer queries toward uncertain areas.\n\n'
+             'v2 emits flow only. There is no\n'
+             'equivalent quantity to compare against.', 11.5, False, INK, 1.18)
+    note(s, "This is the capability I am most confident about. The head predicts an error scale "
+            "for every query alongside the flow itself. When you bin queries by predicted "
+            "uncertainty, the actual error rises monotonically from 0.22 pixels in the "
+            "confident bin to 7.4 in the least confident. It is not perfectly correlated, r is "
+            "0.38, but it is clearly informative and it is directly usable: weight "
+            "correspondences in RANSAC, drop unreliable ones, or send more queries where the "
+            "model is unsure. v2 has no equivalent output, so there is nothing to compare it "
+            "against.")
     footer(s, i)
 
-    # ============================================ 9 · Results: uncertainty calibration
+    # ============================================================ 11 query interface
     s, i = slide()
-    header(s, 'RESULTS', 'Option G: a calibrated confidence signal v2 cannot express')
-    s.shapes.add_picture('results/plots/calibration_bars.png', Inches(2.8), Inches(1.5), width=Inches(7.7))
-    add_text(s, 0.75, 6.15, 11.8, 0.9,
-             'One extra decoder output, trained with a self-calibrating loss (|error|/b + 2 log b).\n'
-             'Bins by predicted b show mean REAL error rising monotonically from 0.22 to 7.38 px --\n'
-             'the confidence output is not noise. Also the first checkpoint to beat v2 on 3px accuracy.', 11.5, False, INK)
+    header(s, 'INTERFACE', 'What a query costs, and how you make one')
+    s.shapes.add_picture('results/plots/decode_flat.png', Inches(0.8), Inches(1.65),
+                         width=Inches(7.0))
+    add_text(s, 8.1, 1.8, 4.6, 0.4, 'The entire API', 12, True, ACCENT)
+    chip(s, 8.1, 2.2, 4.6, 1.9,
+         'state = model.infer_coarse_state(img0, img1)\n'
+         '                                  once, 17 ms\n\n'
+         'flow  = model.decode_queries(\n'
+         '            state, query_coords=q)\n'
+         '            q: [B, N, 2] -> [B, N, 2], 2.6 ms\n\n'
+         'flow, b = ... (return_uncertainty=True)', 10)
+    add_text(s, 8.1, 4.3, 4.6, 2.0,
+             'Decode cost is flat from 800 to 2,048\n'
+             'queries, so it is bound by kernel launch\n'
+             'overhead rather than compute. You get\n'
+             '2,048 points for the price of 800.\n\n'
+             'Above roughly 10,000 points the decode\n'
+             'becomes compute-bound and dense mode\n'
+             'is the better choice.', 11.5, False, INK, 1.18)
+    note(s, "The interface is two calls. One coarse pass per frame pair, then as many decode "
+            "calls as you like against it. The plot shows decode cost is flat between 800 and "
+            "2,048 queries, which tells you it is dominated by kernel launch overhead, not "
+            "arithmetic, so you get two thousand points for the price of eight hundred. Above "
+            "about ten thousand points it becomes compute bound and you should just use dense "
+            "mode.")
     footer(s, i)
 
-    # ============================================ 10 · Results: distillation
+    # ============================================================ 12 GUI
     s, i = slide()
-    header(s, 'RESULTS', 'Option A: refinement self-distillation (a negative result, reported)')
-    s.shapes.add_picture('results/plots/distillation_bars.png', Inches(3.0), Inches(1.5), width=Inches(7.3))
-    add_text(s, 0.75, 6.15, 11.8, 0.9,
-             'Retrained only the refinement module (teacher = the model itself, no ground truth) so 3\n'
-             'iterations approach 8. In isolation it closed 87.5% of the gap -- but end-to-end, through\n'
-             'the real decoder, only 27%, and the result (2.398) lands below v2. Kept as a documented\n'
-             'negative: an isolated-component win does not imply a deployable one.', 11.5, False, INK)
+    header(s, 'INTERFACE', 'Working tool: draw a region, get flow there')
+    if os.path.exists('results/visuals/region_gui_window.png'):
+        s.shapes.add_picture('results/visuals/region_gui_window.png',
+                             Inches(0.8), Inches(1.65), width=Inches(7.6))
+    add_text(s, 8.7, 1.8, 4.0, 4.4,
+             'Load a video, step frame by frame,\n'
+             'drag a box, get flow for that region.\n\n'
+             'Two modes, both timed live:\n\n'
+             'QUERY decodes only inside the box\n'
+             'against a full-frame coarse pass. Exact.\n\n'
+             'CROP feeds only the box through the\n'
+             'whole pipeline, so cost scales with the\n'
+             'area requested, at the price of losing\n'
+             'context outside the crop.\n\n'
+             'The panel shows where the time goes\n'
+             'rather than asserting a speed-up.', 11.5, False, INK, 1.18)
+    note(s, "This is a working tool, not a mock-up. You load a video, step to a frame, drag a "
+            "box, and it computes flow in that box. Two modes. Query mode runs the full coarse "
+            "pass and decodes only inside the box, which is exact. Crop mode feeds just the box "
+            "through the whole pipeline, so the cost scales with the area you asked for, but it "
+            "loses the surrounding context that global matching uses. The panel shows the "
+            "actual breakdown live, including the parts where v3 is not the faster option.")
     footer(s, i)
 
-    # ============================================ 11 · Interface: how to query
+    # ============================================================ 13 scorecard
     s, i = slide()
-    header(s, 'INTERFACE', 'Querying in practice: sizes and API')
-    add_text(s, 0.75, 1.7, 11.8, 1.6,
-             'A query is one continuous (x, y) coordinate; sub-pixel positions are valid inputs. N\n'
-             'ranges from 1 (a single click) to the full frame (479,232 at 384x1248). Decode cost is\n'
-             'flat at ~2.6 ms per call for up to ~2,000 queries per call.\n\n'
-             'Training: batch size 4-16 depending on hardware; 4,096 supervision queries per image,\n'
-             'half placed at motion boundaries; AdamW with a one-cycle schedule peaking at 2e-4;\n'
-             'backbone frozen throughout every result on this deck except the distillation experiment.',
-             12.5, False, INK, line_spacing=1.15)
-    code = ('state = model.infer_coarse_state(img0, img1)     # once, ~17 ms\n'
-            'flow  = model.decode_queries(state, query_coords=q)   # q: [B, N, 2] -> [B, N, 2]')
-    tb = s.shapes.add_textbox(Inches(0.9), Inches(4.7), Inches(11.5), Inches(0.9))
-    tf = tb.text_frame
-    tf.word_wrap = True
-    for j, line in enumerate(code.split('\n')):
-        para = tf.paragraphs[0] if j == 0 else tf.add_paragraph()
-        r = para.add_run(); r.text = line
-        r.font.name = 'Consolas'; r.font.size = Pt(12)
-        r.font.color.rgb = INK
-    footer(s, i)
-
-    # ============================================ 12 · Interface: the GUI
-    s, i = slide()
-    header(s, 'INTERFACE', 'The GUI')
-    framed_pic(s, 'results/visuals/query_gui_selftest.png', 0.75, 1.7, 5.7, 4.0)
-    framed_pic(s, 'results/visuals/query_gui_motion.png', 6.85, 1.7, 5.7, 4.0)
-    add_text(s, 0.75, 5.85, 5.7, 0.6, 'Adaptive queries over a dense overlay, with the magnitude legend.', 10.5, False, MUTED)
-    add_text(s, 6.85, 5.85, 5.7, 0.6, 'Playback with live motion detection, boxed from the coarse flow at zero extra decode cost.', 10.5, False, MUTED)
-    add_text(s, 0.75, 6.5, 11.8, 0.6,
-             'A model selector switches between v3 and the v2 baseline in place: with v2 every interaction\n'
-             'recomputes the full dense map; with v3 the same interactions reuse the cached coarse state.', 11, False, INK)
-    footer(s, i)
-
-    # ============================================ 13 · Interface: live proof
-    s, i = slide()
-    header(s, 'INTERFACE', 'Live run on public video, with measurements')
-    framed_pic(s, 'results/visuals/yt_run_viewer.png', 0.75, 1.7, 6.3, 3.55)
-    framed_pic(s, 'results/visuals/yt_run_resources.png', 7.35, 1.7, 5.3, 3.55)
-    add_text(s, 0.75, 5.45, 11.8, 1.3,
-             'Forty consecutive frame pairs of a public YouTube highway video (640x360), processed live\n'
-             'in the GUI: mean 29.8 FPS end to end with motion boxes on moving vehicles. The resource\n'
-             'graphs were sampled during the same run; GPU memory stays flat because one cached backbone\n'
-             'state serves every interaction.', 11.5, False, INK)
-    footer(s, i)
-
-    # ============================================ 14 · Objectives
-    s, i = slide()
-    header(s, 'OBJECTIVES', 'Where the three goals stand')
-    add_text(s, 0.75, 1.75, 11.8, 4.9,
-             'Goal 1, beat v2 accuracy.  Done, verified on the full validation set, batch-16/100K-step\n'
-             'HPC training: best EPE 2.07 vs v2 2.32 (11% better, big18). 3px accuracy now BEATS v2\n'
-             '(90.02 vs 89.8, uncG). 1px accuracy gap nearly closed (77.51 vs 77.6, uncG -- 0.09 points,\n'
-             'within noise).\n\n'
-             'Goal 2, less compute, edge-viable.  Done for the sparse workload, verified on identical\n'
-             'V100 hardware: first query on a new frame already at parity with v2 (19.1 vs 19.6 ms);\n'
-             'every additional query on the same frame costs ~7x less (2.6 ms vs 19.6 ms) since v2 has\n'
-             'no cached state to reuse.\n\n'
-             'Goal 3, do what v2 cannot.  Done: continuous-coordinate queries, output at any resolution,\n'
-             'sparse matches dense exactly, a working interactive tool, and a calibrated per-query\n'
-             'confidence signal (Pearson r=0.38 vs real error) that v2 cannot express at all.',
-             13, False, INK, line_spacing=1.15)
-    footer(s, i)
-
-    # ============================================ 15 · Limitations
-    s, i = slide()
-    header(s, 'LIMITATIONS', 'What is not yet proven')
-    add_text(s, 0.75, 1.75, 11.8, 4.9,
-             '1px accuracy is close but not fully closed on every checkpoint (grandmix still trails v2\n'
-             'by 1.35 points; only uncG gets within noise).\n\n'
-             'The training-data confound is only partly resolved. grandmix (chairs+vkitti2+sintel) was\n'
-             'the fair-comparison attempt but scored slightly below big18 -- more data did not clearly\n'
-             'help at 100K steps, and the confound is not fully closed until v2 is retrained on the\n'
-             'exact same mixture, which has not been done.\n\n'
-             'The "auxiliary loss improves main accuracy" pattern seen in uncG is a single run, not a\n'
-             'repeated result -- could be seed noise.\n\n'
-             'All speed numbers are RTX 4060 / V100. No Jetson or embedded-device measurement exists yet.\n\n'
-             'Spring (1080p, the dataset motivating above-input-resolution querying) was truncated at\n'
-             '70,000 of 100,000 steps by the 8-hour job limit -- the score (2.080 EPE) is strong but the\n'
-             'run never reached its final LR anneal, and the actual 4K-resolution query test has not run.',
-             13, False, INK, line_spacing=1.15)
-    footer(s, i)
-
-    # ============================================ 16 · Next steps
-    s, i = slide()
-    header(s, 'NEXT STEPS', 'Planned work and two requests')
-    add_text(s, 0.75, 1.7, 6.1, 4.6,
-             'Immediate\n\n'
-             '-  Resubmit spring from step 70,000 with a fresh 8h clock\n'
-             '    to reach its full 100K steps.\n'
-             '-  Run the Spring 4K-ground-truth query test: only a\n'
-             '    queryable decoder can answer above input resolution;\n'
-             '    v2 structurally cannot.\n'
-             '-  Repeat the uncertainty-head run once to check whether\n'
-             '    its accuracy gain is real or seed noise.\n'
-             '-  Retrain v2 itself on the grand-mix data to fully close\n'
-             '    the training-data confound.', 12.5, False, INK, line_spacing=1.15)
-    add_text(s, 7.1, 1.7, 5.8, 4.8,
-             'Requests\n\n'
-             'Request 1 -- continued HPC access\n'
-             'The remaining runs above (spring resumption, v2 retraining, a repeat run) are all 6-8 hour jobs; done on the Explorer cluster so far.\n\n'
-             'Request 2 -- Field Robotics Lab survey data\n'
-             'SeaBED AUV and UAV survey sequences (overlapping frames, slow motion, GPS/IMU tags) are exactly the data this method targets: sparse, on-demand correspondences at chosen points, not full dense flow over a whole seafloor mosaic.',
-             12.5, False, INK, line_spacing=1.15)
-    footer(s, i)
-
-    # ============================================ 17 · Q&A prep
-    s, i = slide()
-    header(s, 'Q&A PREP', 'Questions I expect')
-    add_text(s, 0.75, 1.7, 11.8, 5.0,
-             'Why is flow defined at non-integer coordinates?\n'
-             'The decoder bilinearly samples feature maps, so any real-valued (x, y) is a valid query --\n'
-             'the same mechanism that lets it decode above input resolution.\n\n'
-             'Is the 6-11% EPE improvement real, or a training-data confound?\n'
-             'Partly resolved: grandmix (chairs+vkitti2+sintel, closer to v2\'s own training mix) still\n'
-             'beats v2 by 7% on EPE. Not fully resolved: v2 has not been retrained on that exact mixture.\n\n'
-             'Why does the uncertainty head also seem to improve the main flow output?\n'
-             'Unconfirmed hypothesis: the auxiliary loss may regularize training. Single run; needs a repeat.\n\n'
-             'What happens with fast real-world motion at 60 FPS?\n'
-             'Track-maintain-replenish: propagate points via their own flow answers, drop points that fail\n'
-             'a forward-backward consistency check, replenish only in image regions that lost coverage.\n\n'
-             'Has this been tested on an actual edge device (Jetson)?\n'
-             'No. Every number in this deck is RTX 4060 or V100. That validation has not been done.',
-             13, False, INK, line_spacing=1.2)
-    footer(s, i)
-
-    # ---- Speaker / talking notes, one per slide in order ----
-    notes = [
-        # 1 · Title
-        "Opening line: NeuFlow v3 is the same v2 network everyone here already trusts, with "
-        "one part swapped. Instead of always producing a full dense flow map, it answers flow "
-        "queries at whatever points you ask for. I will show it is faster where it matters, at "
-        "least as accurate, and does two things v2 structurally cannot. Everything I show is "
-        "measured on the full validation set, not cherry-picked frames.",
-        # 2 · Motivation
-        "Set up the problem in one breath: flow tells you where each pixel goes. Every current "
-        "network computes all of it, always. But registration, tracking, and mapping only ever "
-        "use a few hundred points. On a small GPU, computing 479 thousand values to use 800 of "
-        "them is the difference between real time and not. The idea is to keep everything in v2 "
-        "that understands motion and only change how the answer is read out.",
-        # 3 · Method: v2 pipeline
-        "Walk the boxes left to right, then land on the bold line: every one of these blocks is "
-        "frozen in v3, byte for byte identical to v2. I did not retrain the part that finds "
-        "motion. The only thing I touched is the very last step, the upsampler. So any accuracy "
-        "change comes from that one swap, not from disturbing what already works.",
-        # 4 · Method: v3 decoder
-        "The key idea in plain terms: for any coordinate, sample features there, then output "
-        "blend weights over a small 3x3 neighborhood of the coarse flow plus a bilinear value. "
-        "Because it is a bounded blend, it cannot invent wild flow. And I zero-initialize it, so "
-        "before any training it reproduces plain bilinear upsampling exactly. That means training "
-        "can only improve on that starting point. Note it is one coarse pass per frame, then cheap "
-        "per-query work. And v3 is actually smaller than v2, 7.8 vs 9 million parameters.",
-        # 5 · Results: curriculum
-        "This is every configuration I tried, worst to best, left to right. Gray is my laptop, "
-        "black is the cluster. Two honest lessons are on this chart. Sequential fine-tuning, the "
-        "tall bar, made things worse: the model forgot. Mixing datasets in every batch is what "
-        "worked. The best full run, big18, is 2.07 versus v2 at 2.32, about 11 percent better. The "
-        "red line is v2. Everything from FlyingChairs onward is at or below it.",
-        # 6 · Results: precision
-        "EPE is the average, but the lab cares about sharpness, so here is accuracy at 1 and 3 "
-        "pixels. The honest story: uncG is the first version to actually beat v2 on 3-pixel "
-        "accuracy, and it closes the 1-pixel gap to under a tenth of a point, which is noise. "
-        "grandmix is the weak one here on 1px; I am not hiding that.",
-        # 7 · Results: visual comparison
-        "Same scene, same ground truth, four models. I show both the full-set EPE and this "
-        "specific scene's number under each so you can see the single scene is representative, "
-        "not cherry-picked. All three cluster checkpoints beat v2 on the full 1,174-pair set, not "
-        "just here.",
-        # 8 · Results: speed
-        "This is the slide that answers the earlier objection that 6 percent is not worth it. It "
-        "is not really about the 6 percent. On identical hardware, v2 pays 19.6 milliseconds on "
-        "every single call. v3 pays about the same once per frame, then answers every follow-up "
-        "query on that frame for 2.6 milliseconds, because it caches the expensive part. v2 has no "
-        "cached state, so it recomputes everything every time. For a planner or SLAM front-end "
-        "re-querying the same frame, that is a 7x saving.",
-        # 9 · Results: calibration
-        "This is a capability v2 simply does not have. With one extra output and a self-calibrating "
-        "loss, the model reports how much to trust each answer. This chart proves it is not noise: "
-        "sort predictions by claimed confidence and the real error rises monotonically, 0.2 up to "
-        "7.4 pixels, correlation 0.38 over 2.35 million points. A robot can use this to reject bad "
-        "correspondences before they poison a pose estimate.",
-        # 10 · Results: distillation
-        "I am showing this because it is a negative result and I would rather present it than bury "
-        "it. The refinement loop is 59 percent of runtime, so I retrained just that module to do in "
-        "3 iterations what it did in 8, the model teaching itself with no ground truth. Measured in "
-        "isolation it looked great, 87.5 percent of the gap closed. But when I actually merged it "
-        "into the full pipeline and measured end to end, only 27 percent held, and it lands below "
-        "v2 at 2.40. The lesson: a component win measured in isolation is not a deployable win. It "
-        "only becomes worth pursuing if the decoder is retrained at the reduced iteration count, "
-        "which I have not done.",
-        # 11 · Interface: API
-        "Quick and practical. A query is one continuous coordinate; sub-pixel positions are valid. "
-        "The whole interface is two calls: infer state once, then decode queries as many times as "
-        "you want. Training used 4,096 supervision points per image, half on motion boundaries, "
-        "backbone frozen throughout everything except the distillation experiment.",
-        # 12 · Interface: GUI
-        "Live demo backup if the tool cooperates. Left, click any pixel and it returns flow "
-        "instantly. Right, motion detection pulled straight from the coarse flow at zero extra "
-        "cost. The model selector flips between v2 and v3 in place, so you can feel the difference: "
-        "v2 recomputes the whole frame on every interaction, v3 reuses the cached state.",
-        # 13 · Interface: live video
-        "Proof it runs on real, unseen footage, not just the benchmark. 40 frames of a public "
-        "YouTube highway clip, 30 FPS end to end with motion boxes. The graphs on the right were "
-        "sampled during that run; the flat GPU-memory line is the point, one cached state serves "
-        "every interaction.",
-        # 14 · Objectives
-        "Scorecard against the three goals I set. Beat v2 accuracy: done, 11 percent, and 3px now "
-        "beats v2. Less compute for the sparse case: done, verified same hardware. Do what v2 "
-        "cannot: done, arbitrary-coordinate queries and a calibrated confidence signal. I will "
-        "state plainly on the next slide what is not yet proven.",
-        # 15 · Limitations
-        "I want to be the one to raise these, not have them raised for me. The training-data "
-        "confound is only partly closed: I have not retrained v2 on the exact same mixture. The "
-        "uncertainty-head accuracy gain is a single run and could be seed noise. Every number is a "
-        "4060 or V100, never an actual Jetson. And Spring was cut off at 70 percent by the job time "
-        "limit. None of these undo the main results, but they are the honest next things to nail down.",
-        # 16 · Next steps
-        "Concrete plan. Immediate and cheap: finish Spring, run the 4K query test that only a "
-        "queryable model can even attempt, repeat the uncertainty run, retrain v2 on the mixed data "
-        "to close the confound. Then the two asks: continued cluster access for these 6-to-8-hour "
-        "jobs, and access to the lab's own AUV and UAV survey data, which is exactly the sparse, "
-        "overlapping, slow-motion setting this method is built for.",
-        # 17 · Q&A prep
-        "Not shown; my own prep. Anticipated questions with honest one-line answers: why non-integer "
-        "coordinates, whether the improvement is a data confound, why the uncertainty head helps "
-        "accuracy, fast-motion handling, and edge-device status. If I do not know, I say I do not "
-        "know and point to the limitations slide.",
+    header(s, 'ASSESSMENT', 'Against the three objectives I set')
+    rows = [
+        ['Objective', 'Verdict', 'Evidence'],
+        ['Better accuracy than v2', 'NOT MET', 'fair comparison is 2.286 vs 2.324, a tie'],
+        ['', '', 'better numbers require in-domain training data'],
+        ['', '', ''],
+        ['Less compute than v2', 'PARTLY', 'dense 12% slower; first query level'],
+        ['', '', 'repeat query 7.7x cheaper (2.6 vs 19.6 ms)'],
+        ['', '', ''],
+        ['Runs on edge devices', 'UNPROVEN', 'all figures from V100 and RTX 4060'],
+        ['', '', 'no Jetson measurement has been taken'],
     ]
-    for slide_obj, txt in zip(p.slides, notes):
-        note(slide_obj, txt)
+    table(s, 0.75, 1.85, rows, [3.6, 1.9, 6.4], 11.5)
+    add_text(s, 0.75, 4.85, 11.9, 0.4, 'What the project does deliver', 12.5, True, ACCENT)
+    for k, (t, d) in enumerate([
+        ('Queryable output', 'flow at any continuous coordinate, sparse equals dense exactly'),
+        ('Cheap repeat access', '2.6 ms per further query batch on a cached frame'),
+        ('Calibrated confidence', 'per-query error estimate, monotonic against real error'),
+    ]):
+        chip(s, 0.75 + k * 4.0, 5.3, 3.8, 1.1, f'{t}\n\n{d}', 10.5)
+    note(s, "Here is the scorecard against what I set out to do, and two of three are not met. "
+            "Better accuracy: not met, the fair comparison is a tie. Less compute: partly, "
+            "dense is slower, a first query is level, but repeat queries are nearly eight times "
+            "cheaper. Edge capable: unproven, everything I have measured is on a V100 or a "
+            "laptop 4060 and I have not touched a Jetson. What the project does deliver is the "
+            "three things at the bottom: output you can query at any coordinate, cheap repeat "
+            "access to a cached frame, and a calibrated confidence value. Those are real and "
+            "they are measured.")
+    footer(s, i)
 
-    p.save(OUT)
-    print(f'saved {OUT} with {len(p.slides._sldIdLst)} slides and {len(notes)} speaker notes')
+    # ============================================================ 14 limitations
+    s, i = slide()
+    header(s, 'LIMITATIONS', 'What is not yet proven, stated plainly')
+    items = [
+        ('Sub-pixel precision is worse than v2',
+         'By 0.8 to 6.3 points of 1-pixel accuracy. Cause diagnosed (decoder never sees '
+         'full-resolution input) but not fixed.'),
+        ('No edge-device measurement',
+         'Every latency figure is V100 or RTX 4060. The edge claim in the title is a design '
+         'target, not a result.'),
+        ('Single evaluation domain',
+         'All accuracy numbers are VKITTI2 Scene18+20. A synthetic driving benchmark is not '
+         'evidence for field or survey imagery.'),
+        ('Spring run truncated',
+         'Killed by the 8-hour wall clock at roughly 90k of 100k steps, so it is not directly '
+         'comparable to the others.'),
+        ('One seed per configuration',
+         'Differences under about 0.05 px should not be over-read; I have not measured '
+         'seed-to-seed variance.'),
+    ]
+    y = 1.8
+    for t, d in items:
+        add_text(s, 0.75, y, 4.4, 0.3, t, 11.5, True, INK)
+        add_text(s, 5.3, y, 7.3, 0.6, d, 11, False, INK, 1.12)
+        y += 1.02
+    note(s, "Limitations, stated plainly rather than buried. Precision is worse than v2 and I "
+            "have diagnosed but not fixed it. There is no edge device measurement at all, so "
+            "the word edge in my title is a design target and not a result. Everything is "
+            "evaluated on one synthetic driving dataset, which says little about field imagery. "
+            "The Spring run was cut off by the cluster wall clock. And I have one seed per "
+            "configuration, so please do not read too much into differences below about "
+            "five hundredths of a pixel.")
+    footer(s, i)
+
+    # ============================================================ 15 next steps
+    s, i = slide()
+    header(s, 'NEXT STEPS', 'In priority order')
+    steps = [
+        ('1', 'Full-resolution stem for the decoder',
+         'Give the decoder a cheap full-resolution feature map so evidence actually varies '
+         'within an 8x8 cell. This is the direct attack on the precision gap and on making '
+         'continuous querying meaningful rather than nominal.'),
+        ('2', 'Spring 4K evaluation',
+         'Spring provides ground truth at twice the input resolution. v3 can be queried there '
+         'natively; v2 structurally cannot. The one test that demonstrates a capability rather '
+         'than a margin.'),
+        ('3', 'Jetson measurement',
+         'Converts the edge claim from a design target into a result, or refutes it.'),
+        ('4', 'Field or survey imagery',
+         'A registration demonstration on lab data would test the actual use case.'),
+    ]
+    y = 1.85
+    for num, t, d in steps:
+        chip(s, 0.75, y, 0.42, 0.42, num, 12, BOX_DK, WHITE, bold=True)
+        add_text(s, 1.35, y - 0.02, 4.0, 0.3, t, 12, True, INK)
+        add_text(s, 5.5, y - 0.02, 7.1, 0.9, d, 11, False, INK, 1.12)
+        y += 1.28
+    note(s, "Four next steps in priority order. First, give the decoder a full resolution "
+            "feature map. That is the direct attack on the precision gap, and it also matters "
+            "because right now querying between pixels returns something close to "
+            "interpolation, so the arbitrary coordinate claim is thinner than it sounds. "
+            "Second, the Spring dataset gives ground truth at twice the input resolution, which "
+            "v3 can be queried at natively and v2 structurally cannot. That is the one test "
+            "that shows a capability rather than a margin. Third, actually measure a Jetson. "
+            "Fourth, try it on real survey imagery.")
+    footer(s, i)
+
+    # ============================================================ 16 Q&A
+    s, i = slide()
+    header(s, 'ANTICIPATED QUESTIONS', '')
+    qa = [
+        ('Why is flow defined between pixels at all?',
+         'Motion is continuous; the pixel grid is a sampling artefact. A corner tracked to '
+         '(312.7, 188.2) is a real answer, and registration consumes it directly.'),
+        ('Why freeze the backbone?',
+         'To isolate the decoder as the only variable. Unfreezing diverged at batch 4 locally '
+         'and has not been retried at scale.'),
+        ('Why is dense v3 slower than v2?',
+         'v2 upsamples with one convolution that shares work across neighbouring pixels. v3 '
+         'answers each query independently, giving up that sharing to gain the ability to '
+         'answer only what is asked.'),
+        ('Is a tie on EPE worth the added complexity?',
+         'Not on its own. It is worth it if you need queryability, cheap repeat access, or '
+         'confidence values. For plain dense flow, v2 remains the better choice, and I would '
+         'say so.'),
+    ]
+    y = 1.65
+    for q, a in qa:
+        add_text(s, 0.75, y, 11.9, 0.3, q, 12, True, INK)
+        add_text(s, 0.95, y + 0.33, 11.6, 0.65, a, 11, False, ACCENT, 1.12)
+        y += 1.3
+    note(s, "A few questions I expect. Why flow between pixels: because motion is continuous "
+            "and the grid is an artefact of sampling. Why freeze the backbone: to keep the "
+            "decoder as the only variable, and because unfreezing diverged when I tried it. Why "
+            "is dense slower: because v2's convolution shares work between neighbouring pixels "
+            "and my decoder deliberately gives that up in exchange for answering only what is "
+            "asked. And the hardest one, is a tie worth the complexity. On its own, no. If you "
+            "want plain dense flow, use v2, and I will say that plainly. It is worth it if you "
+            "need queryability, cheap repeat access, or a confidence signal.")
+    footer(s, i)
+
+    os.makedirs('docs', exist_ok=True)
+    prs.save(OUT)
+    notes = sum(1 for sl in prs.slides
+                if sl.has_notes_slide and sl.notes_slide.notes_text_frame.text.strip())
+    print(f'saved {OUT} with {len(prs.slides._sldIdLst)} slides and {notes} speaker notes')
 
 
 if __name__ == '__main__':
