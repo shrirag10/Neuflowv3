@@ -399,6 +399,8 @@ class RegionFlowGUI(QMainWindow):
         if not self.frames:
             return
         x0, y0, w, h = box
+        self.view.box = box          # so overlay + outline render for
+                                     # programmatic calls too, not just mouse drags
         i0, i1 = self.frames[self.idx], self.frames[self.idx + 1]
         H, W = i0.shape[:2]
         frac = (w * h) / float(H * W)
@@ -472,8 +474,16 @@ def main():
         if not gui.frames:
             # synthesize a moving-texture clip so the test needs no video file
             rng = np.random.RandomState(0)
-            tex = (rng.rand(300, 700, 3) * 255).astype(np.uint8)
-            tex = cv2.GaussianBlur(tex, (0, 0), 3)
+            tex = (rng.rand(300, 700, 3) * 90 + 60).astype(np.uint8)
+            tex = cv2.GaussianBlur(tex, (0, 0), 4)
+            for _ in range(14):      # shapes give the eye something to track
+                c = tuple(int(v) for v in rng.randint(40, 255, 3))
+                x, y = rng.randint(0, 690), rng.randint(0, 290)
+                if rng.rand() > .5:
+                    cv2.circle(tex, (x, y), rng.randint(12, 34), c, -1)
+                else:
+                    cv2.rectangle(tex, (x, y), (x + rng.randint(20, 60),
+                                                y + rng.randint(20, 60)), c, -1)
             gui.frames = [np.roll(tex, i * 3, axis=1)[:, :640].copy() for i in range(4)]
             gui.slider.setRange(0, 2)
             eng.warmup(*gui.frames[0].shape[:2])
@@ -487,8 +497,11 @@ def main():
             print(f'--- mode {mode} (steady state) ---')
             print(gui.readout.text())
         os.makedirs('results/visuals', exist_ok=True)
-        gui.view.pixmap().save('results/visuals/region_gui_selftest.png')
-        print('saved results/visuals/region_gui_selftest.png')
+        gui.view.pixmap().save('results/visuals/region_gui_frame.png')
+        gui.resize(980, 620)
+        QApplication.processEvents()
+        gui.grab().save('results/visuals/region_gui_window.png')
+        print('saved results/visuals/region_gui_frame.png and region_gui_window.png')
         return
 
     gui.show()
