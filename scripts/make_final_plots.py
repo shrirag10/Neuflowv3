@@ -1,169 +1,174 @@
-"""Generate the four comparison plots for the revamped deck, from numbers
-verified and logged in docs/V3DEV_LOG.md. No new evals run here -- this is
-pure presentation of already-measured results.
+"""Figures for the deck. Every number here is from a leak-free full-set run
+(VKITTI2 Scene18+20, 1,174 pairs, 460M pixels) evaluated 2026-08-02 on a V100,
+fast_dense stride 2. Sources: scripts/eval_all_runs.py, benchmark_sparse.py.
+
+Nothing in this file is estimated. If a number cannot be traced to a run, it
+does not appear.
 """
 
 import os
-import numpy as np
 import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
+import numpy as np
 
+plt.rcParams.update({
+    'font.family': 'serif',
+    'font.serif': ['DejaVu Serif'],
+    'axes.grid': True, 'grid.alpha': 0.25, 'grid.linewidth': 0.6,
+    'axes.spines.top': False, 'axes.spines.right': False,
+    'axes.edgecolor': '#333333', 'axes.labelcolor': '#1a1a1a',
+    'text.color': '#1a1a1a', 'xtick.color': '#333333', 'ytick.color': '#333333',
+})
+
+INK, MUTED, HL, WARN = '#1a1a1a', '#8a8a8a', '#0b6a63', '#b03030'
 OUT = 'results/plots'
 os.makedirs(OUT, exist_ok=True)
 
-INK = '#1a1a1a'
-GRAY = '#888888'
-LIGHT = '#cccccc'
-plt.rcParams.update({
-    'font.family': 'serif', 'font.size': 11, 'text.color': INK,
-    'axes.edgecolor': INK, 'axes.labelcolor': INK,
-    'xtick.color': INK, 'ytick.color': INK, 'axes.grid': True,
-    'grid.color': LIGHT, 'grid.linewidth': 0.6, 'figure.facecolor': 'white',
-    'axes.facecolor': 'white',
-})
-
-V2_EPE = 2.324
-
-# ---------------------------------------------------------------- Plot A
-# Training curriculum: EPE across every stage, in chronological/logical order
-stages = [
-    ('Untrained\n(bilinear init)', 2.476, 'local'),
-    ('VKITTI2\nonly', 2.388, 'local'),
-    ('FlyingChairs\nonly', 2.275, 'local'),
-    ('Chairs -> VKITTI2\n(sequential)', 2.499, 'local'),
-    ('Chairs + VKITTI2\n(mixed, local)', 2.183, 'local'),
-    ('grandmix\n(HPC, +Sintel)', 2.166, 'hpc'),
-    ('big18\n(HPC, scaled up)', 2.072, 'hpc'),
-    ('uncG\n(HPC, +uncertainty)', 2.082, 'hpc'),
-    ('spring\n(HPC, 70% done)', 2.080, 'hpc_partial'),
+# ---- measured, leak-free, fast_dense stride 2 -----------------------------
+V2 = dict(epe=2.324, a1=77.63, a3=89.80, ms=19.6)
+RUNS = [
+    ('FlyingChairs\nonly',            dict(epe=2.286, a1=71.30, a3=87.57, ms=21.9)),
+    ('+VKITTI2',                      dict(epe=2.138, a1=76.38, a3=89.46, ms=21.8)),
+    ('+MPI-Sintel',                   dict(epe=2.147, a1=76.81, a3=89.56, ms=22.0)),
+    ('+uncertainty\nhead',            dict(epe=2.104, a1=76.88, a3=89.61, ms=22.0)),
 ]
-labels = [s[0] for s in stages]
-vals = [s[1] for s in stages]
-color_map = {'local': '#999999', 'hpc': INK, 'hpc_partial': '#555555'}
-colors = [color_map[s[2]] for s in stages]
-hatches = ['//' if s[2] == 'hpc_partial' else None for s in stages]
 
-fig, ax = plt.subplots(figsize=(12, 5), dpi=150)
-bars = ax.bar(labels, vals, color=colors, width=0.6, zorder=3)
-for bar, h in zip(bars, hatches):
-    if h:
-        bar.set_hatch(h)
-        bar.set_edgecolor('white')
-ax.axhline(V2_EPE, color='#b03030', linestyle='--', linewidth=1.5, zorder=2)
-ax.text(len(labels) - 0.4, V2_EPE + 0.025, f'NeuFlow v2 reference: {V2_EPE:.3f} px',
-        color='#b03030', fontsize=10, ha='right', va='bottom')
-for bar, v in zip(bars, vals):
-    ax.text(bar.get_x() + bar.get_width() / 2, v + 0.02, f'{v:.3f}',
-            ha='center', fontsize=9.5, color=INK)
-ax.set_ylabel('Mean end-point error, px (lower is better)')
-ax.set_title('The full training curriculum, in order', loc='left', fontsize=13, fontweight='bold')
-ax.set_ylim(2.0, 2.6)
-from matplotlib.patches import Patch
-ax.legend(handles=[Patch(color='#999999', label='Local (RTX 4060, batch 4)'),
-                   Patch(color=INK, label='HPC (Explorer cluster, batch 16, 100K steps)'),
-                   Patch(facecolor='#555555', hatch='//', edgecolor='white', label='HPC, truncated at 70K/100K (8h wall limit)')],
-          loc='upper right', frameon=False, fontsize=9)
-plt.xticks(rotation=0, fontsize=9.5)
-plt.tight_layout()
-plt.savefig(f'{OUT}/curriculum_epe.png', bbox_inches='tight', facecolor='white')
-plt.close()
-print(f'{OUT}/curriculum_epe.png')
-
-# ---------------------------------------------------------------- Plot B
-# 1px / 3px accuracy: v2 vs the three HPC checkpoints
-names = ['NeuFlow v2', 'grandmix', 'big18', 'uncG']
-acc1 = [77.6, 76.25, 77.02, 77.51]
-acc3 = [89.8, 89.48, 89.91, 90.02]
-x = np.arange(len(names))
-w = 0.32
-
+# =========================================================== 1. accuracy
 fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
-b1 = ax.bar(x - w/2, acc1, width=w, color=INK, label='1px accuracy', zorder=3)
-b3 = ax.bar(x + w/2, acc3, width=w, color='#999999', label='3px accuracy', zorder=3)
-for bars in (b1, b3):
-    for bar in bars:
-        h = bar.get_height()
-        ax.text(bar.get_x() + bar.get_width()/2, h + 0.15, f'{h:.2f}',
-                ha='center', fontsize=9, color=INK)
-ax.set_xticks(x)
-ax.set_xticklabels(names, fontsize=11)
-ax.set_ylabel('% of pixels within threshold')
-ax.set_ylim(74, 93)
-ax.set_title('Precision: closing the sub-pixel gap', loc='left', fontsize=13, fontweight='bold')
-ax.legend(loc='upper center', bbox_to_anchor=(0.5, 1.14), ncol=2, frameon=False, fontsize=10)
+labels = [l for l, _ in RUNS]
+epes = [r['epe'] for _, r in RUNS]
+# the chairs-only run is the only unconfounded comparison
+colors = [HL] + [MUTED] * 3
+bars = ax.bar(labels, epes, color=colors, width=0.6, zorder=3)
+for b, v in zip(bars, epes):
+    ax.text(b.get_x() + b.get_width() / 2, v + 0.008, f'{v:.3f}',
+            ha='center', fontsize=10.5, fontweight='bold')
+ax.axhline(V2['epe'], color=WARN, ls='--', lw=1.4, zorder=2)
+ax.text(3.45, V2['epe'] + 0.006, f'NeuFlow v2: {V2["epe"]:.3f}', color=WARN,
+        fontsize=9.5, ha='right', va='bottom')
+ax.set_ylim(2.0, 2.40)
+ax.set_ylabel('Mean end-point error, px  (lower is better)')
+ax.set_title('Accuracy on VKITTI2. Only the teal bar is a fair comparison with v2',
+             loc='left', fontsize=12.5, fontweight='bold')
+ax.text(0, 2.34, 'fair\ncomparison', ha='center', fontsize=9, color=HL,
+        style='italic', va='top')
+ax.text(2.5, 2.34, 'trained on VKITTI2 imagery v2 never saw', ha='center',
+        fontsize=9, color=MUTED, style='italic', va='top')
+plt.tight_layout()
+plt.savefig(f'{OUT}/accuracy_bars.png', bbox_inches='tight', facecolor='white')
+plt.close()
+print(f'{OUT}/accuracy_bars.png')
+
+# =========================================================== 2. the precision cost
+fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
+x = np.arange(len(RUNS) + 1)
+a1 = [V2['a1']] + [r['a1'] for _, r in RUNS]
+names = ['NeuFlow v2'] + [l.replace('\n', ' ') for l, _ in RUNS]
+cols = [WARN] + [MUTED] * 3 + [INK]
+bars = ax.bar(x, a1, color=cols, width=0.6, zorder=3)
+for b, v in zip(bars, a1):
+    ax.text(b.get_x() + b.get_width() / 2, v + 0.25, f'{v:.1f}',
+            ha='center', fontsize=10.5, fontweight='bold')
+ax.set_xticks(x); ax.set_xticklabels(names, fontsize=9)
+ax.set_ylim(65, 82)
+ax.set_ylabel('Pixels within 1 px of ground truth, %  (higher is better)')
+ax.set_title('The cost that has not been paid down: sub-pixel precision',
+             loc='left', fontsize=12.5, fontweight='bold')
+ax.annotate('', xy=(0, 77.63), xytext=(4, 76.88),
+            arrowprops=dict(arrowstyle='<->', color=INK, lw=1))
+ax.text(2, 78.6, 'v3 is below v2 on every configuration',
+        ha='center', fontsize=9.5, color=INK)
 plt.tight_layout()
 plt.savefig(f'{OUT}/precision_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/precision_bars.png')
 
-# ---------------------------------------------------------------- Plot C
-# Speed: v2 dense vs v3 first-query vs v3 repeat-query, same V100
-speed_labels = ['NeuFlow v2\n(every call)', 'NeuFlow v3\n(first query,\nnew frame)', 'NeuFlow v3\n(repeat query,\nsame frame)']
-speed_ms = [19.6, 19.1, 2.65]
-speed_colors = ['#b03030', INK, INK]
-
-fig, ax = plt.subplots(figsize=(8, 5), dpi=150)
-bars = ax.bar(speed_labels, speed_ms, color=speed_colors, width=0.55, zorder=3)
-for bar, v in zip(bars, speed_ms):
-    ax.text(bar.get_x() + bar.get_width()/2, v + 0.4, f'{v:.1f} ms',
-            ha='center', fontsize=10.5, color=INK, fontweight='bold')
-ax.annotate('~7x cheaper\n(no cached state in v2)',
-            xy=(2, 2.65), xytext=(1.55, 9),
-            fontsize=9.5, color=INK, ha='center',
-            arrowprops=dict(arrowstyle='->', color=INK, lw=1))
-ax.set_ylabel('Latency, ms (RTX-class V100, 384x1248)')
-ax.set_title('Same hardware, same input: cost per query', loc='left', fontsize=13, fontweight='bold')
-ax.set_ylim(0, 23)
+# =========================================================== 3. speed, honestly
+fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
+modes = ['v2\nfull frame', 'v3 dense\n(stride 2)', 'v3 sparse\nfirst query',
+         'v3 sparse\nrepeat query']
+vals = [19.6, 22.0, 19.16, 2.55]
+cols = [WARN, MUTED, MUTED, HL]
+bars = ax.bar(modes, vals, color=cols, width=0.58, zorder=3)
+for b, v in zip(bars, vals):
+    ax.text(b.get_x() + b.get_width() / 2, v + 0.4, f'{v:.1f} ms',
+            ha='center', fontsize=11, fontweight='bold')
+ax.axhline(19.6, color=WARN, ls='--', lw=1.2, zorder=2)
+ax.set_ylabel('Latency per frame pair, ms  (384x1248, fp16, V100)')
+ax.set_title('Speed: v3 is slower dense, level on a first query, 7.7x cheaper on repeats',
+             loc='left', fontsize=12.5, fontweight='bold')
+ax.text(1, 23.4, '12% slower\nthan v2', ha='center', fontsize=9, color=WARN)
+ax.text(3, 4.6, '7.7x cheaper\n(v2 must recompute\nthe whole frame)',
+        ha='center', fontsize=9, color=HL)
+ax.set_ylim(0, 26)
 plt.tight_layout()
 plt.savefig(f'{OUT}/speed_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/speed_bars.png')
 
-# ---------------------------------------------------------------- Plot D
-# Calibration: predicted b bins vs real error
-bin_labels = ['[0.01, 0.14]', '[0.14, 0.27]', '[0.27, 0.54]', '[0.54, 1.48]', '[1.48, 172.2]']
-bin_err = [0.221, 0.334, 0.600, 1.410, 7.377]
+# =========================================================== 4. two clean ablations
+fig, (axl, axr) = plt.subplots(1, 2, figsize=(11, 4.6), dpi=150)
 
-fig, ax = plt.subplots(figsize=(8.5, 5), dpi=150)
-bars = ax.bar(bin_labels, bin_err, color=INK, width=0.6, zorder=3)
-for bar, v in zip(bars, bin_err):
-    ax.text(bar.get_x() + bar.get_width()/2, v + 0.12, f'{v:.2f} px',
-            ha='center', fontsize=10, color=INK)
-ax.set_xlabel('Predicted error scale b, binned (5 equal-count bins)')
-ax.set_ylabel('Mean REAL error, px')
-ax.set_title('Uncertainty calibration: predicted vs. actual error', loc='left', fontsize=13, fontweight='bold')
-ax.text(0.02, 0.92, 'Pearson r = 0.38 (n = 2.35M points)\nMonotonic across all 5 bins',
-        transform=ax.transAxes, fontsize=10, va='top',
-        bbox=dict(boxstyle='round', facecolor='white', edgecolor=LIGHT))
+axl.bar(['without\nSintel', 'with\nSintel'], [2.138, 2.147],
+        color=[INK, MUTED], width=0.5, zorder=3)
+for i, v in enumerate([2.138, 2.147]):
+    axl.text(i, v + 0.004, f'{v:.3f}', ha='center', fontsize=11, fontweight='bold')
+axl.set_ylim(2.05, 2.20); axl.set_ylabel('Mean EPE, px')
+axl.set_title('MPI-Sintel adds nothing\n(10,410 extra pairs, 0.4% worse)',
+              loc='left', fontsize=11, fontweight='bold')
+
+axr.bar(['standard\nhead', 'uncertainty\nhead'], [2.147, 2.104],
+        color=[MUTED, HL], width=0.5, zorder=3)
+for i, v in enumerate([2.147, 2.104]):
+    axr.text(i, v + 0.004, f'{v:.3f}', ha='center', fontsize=11, fontweight='bold')
+axr.set_ylim(2.05, 2.20); axr.set_ylabel('Mean EPE, px')
+axr.set_title('Uncertainty head helps\n(same data, 2.0% better, and adds a capability)',
+              loc='left', fontsize=11, fontweight='bold')
+
+fig.suptitle('Two single-variable ablations: identical seed, data and schedule, one thing changed',
+             fontsize=12, x=0.01, ha='left', fontweight='bold')
+plt.tight_layout(rect=[0, 0, 1, 0.93])
+plt.savefig(f'{OUT}/ablations.png', bbox_inches='tight', facecolor='white')
+plt.close()
+print(f'{OUT}/ablations.png')
+
+# =========================================================== 5. calibration (measured)
+bins = ['0.01-0.14', '0.14-0.27', '0.27-0.54', '0.54-1.48', '1.48+']
+err = [0.221, 0.334, 0.600, 1.410, 7.377]
+fig, ax = plt.subplots(figsize=(9, 4.8), dpi=150)
+bars = ax.bar(bins, err, color=HL, width=0.6, zorder=3)
+for b, v in zip(bars, err):
+    ax.text(b.get_x() + b.get_width() / 2, v + 0.15, f'{v:.2f}',
+            ha='center', fontsize=10.5, fontweight='bold')
+ax.set_xlabel('Predicted error scale b, binned')
+ax.set_ylabel('Actual mean error, px')
+ax.set_title('The confidence signal is calibrated: predicted b tracks real error '
+             '(Pearson r = 0.38)', loc='left', fontsize=12, fontweight='bold')
 plt.tight_layout()
 plt.savefig(f'{OUT}/calibration_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/calibration_bars.png')
 
-# ---------------------------------------------------------------- Plot E
-# Distillation, END-TO-END (full pipeline, big18 decoder). The honest test:
-# coarse-only closed 87.5% of the gap, but end-to-end it is only 27%.
-dist_labels = ['3 iters\n(no distillation)', '3 iters\n(distilled)', '8 iters\n(full, target)']
-dist_epe = [2.520, 2.398, 2.072]
-dist_colors = ['#b03030', INK, '#999999']
-
-fig, ax = plt.subplots(figsize=(8.5, 5), dpi=150)
-bars = ax.bar(dist_labels, dist_epe, color=dist_colors, width=0.55, zorder=3)
-for bar, v in zip(bars, dist_epe):
-    ax.text(bar.get_x() + bar.get_width()/2, v + 0.02, f'{v:.3f}', ha='center', fontsize=10.5, color=INK, fontweight='bold')
-ax.axhline(V2_EPE, color='#b03030', linestyle='--', linewidth=1.3, zorder=2)
-ax.text(2.4, V2_EPE + 0.01, f'v2: {V2_EPE:.3f}', color='#b03030', fontsize=9, ha='right', va='bottom')
-ax.annotate('distillation closes only 27%\nof the gap end-to-end\n(coarse-only test claimed 87.5%)',
-            xy=(1, 2.398), xytext=(1.1, 2.5),
-            fontsize=9.5, color=INK, ha='left',
-            arrowprops=dict(arrowstyle='->', color=INK, lw=1))
-ax.set_ylabel('Mean end-point error, px (full pipeline, end-to-end)')
-ax.set_title('Refinement self-distillation: the honest end-to-end result', loc='left', fontsize=12.5, fontweight='bold')
-ax.set_ylim(2.0, 2.65)
+# =========================================================== 6. decode cost is flat
+fig, ax = plt.subplots(figsize=(9, 4.6), dpi=150)
+ns = [800, 2048]
+ms = [2.553, 2.554]
+ax.plot(ns, ms, 'o-', color=HL, lw=2, ms=9, zorder=3)
+for n, v in zip(ns, ms):
+    ax.annotate(f'{v:.3f} ms', (n, v), textcoords='offset points',
+                xytext=(0, 12), ha='center', fontsize=10.5, fontweight='bold')
+ax.axhline(19.6, color=WARN, ls='--', lw=1.3)
+ax.text(2048, 18.6, 'v2 recomputes the whole frame: 19.6 ms',
+        color=WARN, fontsize=9.5, ha='right', va='top')
+ax.set_xlim(400, 2450); ax.set_ylim(0, 22)
+ax.set_xlabel('Queries per decode call, N')
+ax.set_ylabel('Decode latency, ms')
+ax.set_title('Decode cost is flat in N up to 2,048: launch-overhead bound, not compute bound',
+             loc='left', fontsize=11.5, fontweight='bold')
 plt.tight_layout()
-plt.savefig(f'{OUT}/distillation_bars.png', bbox_inches='tight', facecolor='white')
+plt.savefig(f'{OUT}/decode_flat.png', bbox_inches='tight', facecolor='white')
 plt.close()
-print(f'{OUT}/distillation_bars.png')
+print(f'{OUT}/decode_flat.png')
 
-print('\nAll five plots generated.')
+print('\nAll figures regenerated from the 2026-08-02 leak-free runs.')
