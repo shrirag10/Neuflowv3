@@ -54,9 +54,11 @@ replaces only its final upsampling stage with an implicit decoder, so the model
 answers flow queries at any continuous coordinate. Cost scales with the number of
 points asked for, $O(N)$, not with image area, $O(H \times W)$.
 
-v3 matches v2's accuracy with 13\% fewer parameters. It adds three things v2
-cannot do at all: flow at sub-pixel coordinates, repeat queries on a cached frame
-at 7.7$\times$ lower cost, and a calibrated confidence value per query.
+The decoder costs accuracy: 2.384\px\ against v2's 2.324\px, so 2.6\% worse on
+mean error and 1.5 points worse on 1-pixel accuracy. In exchange it adds three
+things v2 cannot do at all: flow at sub-pixel coordinates, repeat queries on a
+cached frame at 7.7$\times$ lower cost, and a calibrated confidence value per
+query, from a model with 13\% fewer parameters. This report prices that trade.
 
 \section{Why queryable flow}
 Flow networks produce a dense map. Many consumers do not want one.
@@ -84,9 +86,9 @@ $1/16$ for an initial flow, recurrent refinement (one iteration at $1/16$, eight
 at $1/8$), then a learned convex upsampler to full resolution.
 
 v3 keeps all of that up to the $1/8$ coarse flow, with every learned weight
-frozen. Only the upsampler is replaced. In the runs reported here the
-batch-normalisation running statistics of the frozen stack adapted to the
-training data instead of holding v2's values. Section~6 covers what that costs.
+frozen and every batch-normalisation running statistic held at v2's value. I
+verify this per checkpoint: all 137 shared tensors are bit-identical to v2, so the
+comparison below isolates the decoder and nothing else.
 
 \subsection{The decoder}
 Two phases.
@@ -154,29 +156,39 @@ paths, stride-2 fidelity, seed reproducibility.
 \toprule
 Model & Training data & EPE (px) & 1px (\%) & 3px (\%) & Params \\
 \midrule
-NeuFlow v2 & FlyingThings & 2.324 & 77.63 & 89.80 & 9.03\,M \\
-NeuFlow v3 & FlyingChairs & 2.286 & 71.30 & 87.57 & \textbf{7.83\,M} \\
-NeuFlow v3 & \quad + VKITTI2 & 2.138 & 76.38 & 89.46 & 7.83\,M \\
-NeuFlow v3 & \quad + MPI-Sintel & 2.147 & 76.81 & 89.56 & 7.83\,M \\
-NeuFlow v3 & \quad + uncertainty head & \textbf{2.104} & 76.88 & 89.61 & 7.83\,M \\
+NeuFlow v2 & FlyingThings & \textbf{2.324} & \textbf{77.63} & \textbf{89.80} & 9.03\,M \\
+NeuFlow v3 & FlyingChairs & 2.500 & 72.81 & 87.88 & \textbf{7.83\,M} \\
+NeuFlow v3 & \quad + VKITTI2 & 2.398 & 75.74 & 88.94 & 7.83\,M \\
+NeuFlow v3 & \quad + MPI-Sintel & 2.392 & 75.83 & 88.98 & 7.83\,M \\
+NeuFlow v3 & \quad + uncertainty head & 2.384 & 76.13 & 89.02 & 7.83\,M \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The FlyingChairs row is the fair comparison. That model saw no driving imagery,
-which is also true of v2. It scores 2.286\px\ against v2's 2.324\px\ on unseen
-driving scenes, so the two are equivalent, with v3 using 13\% fewer parameters.
+Every v3 configuration sits above v2. The best, at 2.384\px, is 2.6\% worse on
+mean error and 1.5 points worse on 1-pixel accuracy. The like-for-like comparison
+is worse still: trained on FlyingChairs alone, mirroring v2's own training, v3
+reaches 2.500\px, which is 7.6\% behind.
 
-The mixed-data rows reach 2.104\px, but they train on VKITTI2 scenes from the same
-simulator as the test set and v2 never saw that data. Those numbers show what the
-architecture reaches given representative data. They are not a fair comparison
-and I do not present them as beating v2.
+So the implicit decoder is less accurate than v2's convex upsampler. The reason is
+identified in Section~6 and is not a training artefact: the decoder's finest input
+sits at $1/8$ resolution while v2's upsampler reads the full-resolution frame.
 
-The three mixed configurations span 2.10 to 2.16\px\ and cannot be separated from
-each other. Evaluating two checkpoints of each run moves the result by up to
-0.038\px, which is the same size as the gaps between them. Nothing below roughly
-0.05\px\ is resolvable here. What does hold at both checkpoints: adding in-domain
-data is worth about 0.15\px\ and five points of 1-pixel accuracy.
+The ordering is monotonic. Each addition of data helps, and the uncertainty head is
+best of the four, though the last three differ by less than 0.02\px\ and I would
+not read much into their ranking from a single seed.
+
+These numbers replace an earlier set that showed v3 at 2.10 to 2.29\px. Those runs
+had drifting normalisation statistics in the supposedly frozen stack, worth about
+0.25\px. With the statistics genuinely frozen the advantage disappears.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.86\textwidth]{figures/freeze_effect.png}
+\caption{The same four configurations trained with drifting versus verifiably
+frozen normalisation statistics. The drift was worth roughly 0.25\,px and was
+responsible for v3 appearing to match v2.}
+\end{figure}
 
 \subsection{Compute}
 \begin{center}
@@ -185,7 +197,7 @@ data is worth about 0.15\px\ and five points of 1-pixel accuracy.
 \toprule
 Mode & Latency & Note \\
 \midrule
-NeuFlow v2, full frame & 19.6\ms & its only mode \\
+NeuFlow v2, full frame & 19.3\ms & its only mode \\
 v3 sparse, first query on a new pair & 19.16\ms & level with v2 \\
 \textbf{v3 sparse, repeat query on a cached pair} & \textbf{2.55\ms} & \textbf{7.7$\times$ cheaper} \\
 v3 dense, stride 2 & 22.0\ms & not the intended mode \\
@@ -215,17 +227,17 @@ bound by kernel launch overhead, not compute, so 2{,}048 points cost the same as
 \toprule
 Predicted scale $b$ & Actual mean error \\
 \midrule
-0.01 to 0.11 & 0.313\px \\
-0.11 to 0.20 & 0.504\px \\
-0.20 to 0.41 & 0.807\px \\
-0.41 to 1.22 & 1.652\px \\
-above 1.22 & 6.723\px \\
+0.01 to 0.10 & 0.480\px \\
+0.10 to 0.19 & 0.896\px \\
+0.19 to 0.39 & 1.018\px \\
+0.39 to 1.22 & 1.837\px \\
+above 1.22 & 7.100\px \\
 \bottomrule
 \end{tabular}
 \end{center}
 
 Measured over 2{,}348{,}000 queries. Actual error rises monotonically across all
-five bins, a 21$\times$ span, Pearson $r = 0.345$. The correlation is not strong
+five bins, a 15$\times$ span, Pearson $r = 0.318$. The correlation is not strong
 but the signal is clearly informative and directly usable: weight correspondences
 in RANSAC, drop unreliable ones, or send more queries where the model is unsure.
 v2 outputs flow only and has nothing comparable.
@@ -238,45 +250,39 @@ selection so cost scales with the area requested. Both print their latency
 breakdown live.
 
 \section{What v3 is for}
-The contribution is an operating point, not a leaderboard position. v3 gives v2's
-accuracy from a smaller model and adds three properties the fixed-resolution
-design cannot express:
+The contribution is an operating point, not a leaderboard position. v3 trades
+2.6\% of mean accuracy and 1.5 points of 1-pixel accuracy for three properties the
+fixed-resolution design cannot express, from a model 13\% smaller:
 
 \begin{enumerate}
 \item Flow at any continuous coordinate, with sparse output identical to dense.
 \item Repeat access at 2.55\ms\ per query batch against a cached frame, versus a
-      full 19.6\ms\ recomputation.
+      full 19.3\ms\ recomputation.
 \item A calibrated error estimate on every correspondence.
 \end{enumerate}
 
 If an application consumes one full dense flow field per frame and nothing else,
-v2 is the better choice. It produces that product 12\% faster and with higher
-sub-pixel precision. v3 is the right choice when the consumer picks its own query
+v2 is the better choice on every axis: more accurate, and 14\% faster in that mode.
+I would say so plainly. v3 earns its place when the consumer picks its own query
 points, revisits a frame, needs positions between pixels, or wants a confidence
-value.
+value, and when 2.6\% of mean accuracy is an acceptable price for those.
 
 \section{Limitations}
 
-\textbf{Sub-pixel precision.} v3 trails v2 by 0.8 to 6.3 points of 1-pixel
-accuracy while matching or beating it on mean error. The decoder makes fewer large
-errors but is less exact on most pixels. I know the cause: the decoder's finest
-input is at $1/8$ resolution, so the evidence it sees barely changes inside an
-$8\times8$ cell, while v2's upsampler reads the full-resolution frame directly.
-Adding a Fourier positional encoding of the sub-cell offset changed nothing, which
-rules out missing positional signal and points at missing high-resolution
-features.
+\textbf{Accuracy.} The decoder is less accurate than the upsampler it replaces, by
+2.6\% on mean error and 1.5 points of 1-pixel accuracy at best, 7.6\% on the
+like-for-like comparison. I know the cause: the decoder's finest input is at $1/8$
+resolution, so the evidence it sees barely changes inside an $8\times8$ cell, while
+v2's upsampler reads the full-resolution frame directly. Adding a Fourier
+positional encoding of the sub-cell offset changed nothing, which rules out missing
+positional signal and points at missing high-resolution features. Section~7 item~1
+is the proposed fix.
 
-\textbf{Adapted normalisation statistics.} The frozen stack's learned weights are
-unchanged, but its batch-normalisation running statistics took roughly 24{,}800
-updates during training instead of holding v2's values. Two consequences. The
-comparison in Section~4.1 is v3 with statistics adapted to its own training set
-against v2 with statistics from FlyingThings, not a decoder-only comparison, and
-for the mixed runs that adaptation points at the evaluation domain. Out-of-domain
-robustness also suffers: on $1920\times1080$ Spring imagery, far from the
-$320\times496$ training crops, the adapted statistics degrade the coarse flow
-badly while v2's untouched statistics do not. The training loop is fixed. Runs
-with strictly frozen statistics are needed to separate the decoder's contribution
-from this effect.
+The same limitation means sub-pixel querying is currently closer to interpolation
+than to genuine sub-pixel inference: queries within one $8\times8$ cell see nearly
+identical evidence. The interface is exact and the mechanism is real, but the extra
+information it can return between pixels is small until the decoder sees
+full-resolution features.
 
 \textbf{No embedded measurement.} Every latency figure is V100 or RTX 4060. The
 edge claim is a design target, not a result.

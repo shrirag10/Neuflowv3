@@ -1,9 +1,13 @@
-"""Figures for the deck. Every number here is from a leak-free full-set run
-(VKITTI2 Scene18+20, 1,174 pairs, 460M pixels) evaluated 2026-08-02 on a V100,
-fast_dense stride 2. Sources: scripts/eval_all_runs.py, benchmark_sparse.py.
+"""Figures for the deck and report.
 
-Nothing in this file is estimated. If a number cannot be traced to a run, it
-does not appear.
+All numbers are from the 2026-08-03 runs: leak-free splits AND a verifiably
+frozen front end (diag_backbone reports 0 of 137 shared tensors differing from
+v2). Earlier figures came from runs whose BatchNorm statistics had drifted, which
+flattered v3 by roughly 0.25 px; those are superseded.
+
+VKITTI2 Scene18+20, 1,174 pairs, 460,573,660 pixels, V100, fp16, fast_dense
+stride 2. Sources: scripts/eval_all_runs.py, benchmark_sparse.py,
+scripts/eval_calibration.py. Nothing here is estimated.
 """
 
 import os
@@ -26,12 +30,12 @@ OUT = 'results/plots'
 os.makedirs(OUT, exist_ok=True)
 
 # ---- measured, leak-free, fast_dense stride 2 -----------------------------
-V2 = dict(epe=2.324, a1=77.63, a3=89.80, ms=19.6)
+V2 = dict(epe=2.324, a1=77.63, a3=89.80, ms=19.3)
 RUNS = [
-    ('FlyingChairs\nonly',            dict(epe=2.286, a1=71.30, a3=87.57, ms=21.9)),
-    ('+VKITTI2',                      dict(epe=2.138, a1=76.38, a3=89.46, ms=21.8)),
-    ('+MPI-Sintel',                   dict(epe=2.147, a1=76.81, a3=89.56, ms=22.0)),
-    ('+uncertainty\nhead',            dict(epe=2.104, a1=76.88, a3=89.61, ms=22.0)),
+    ('FlyingChairs\nonly',            dict(epe=2.500, a1=72.81, a3=87.88, ms=21.9)),
+    ('+VKITTI2',                      dict(epe=2.398, a1=75.74, a3=88.94, ms=21.9)),
+    ('+MPI-Sintel',                   dict(epe=2.392, a1=75.83, a3=88.98, ms=21.9)),
+    ('+uncertainty\nhead',            dict(epe=2.384, a1=76.13, a3=89.02, ms=22.0)),
 ]
 
 # =========================================================== 1. accuracy
@@ -39,7 +43,7 @@ fig, ax = plt.subplots(figsize=(9, 5), dpi=150)
 labels = [l for l, _ in RUNS]
 epes = [r['epe'] for _, r in RUNS]
 # the chairs-only run is the only unconfounded comparison
-colors = [HL] + [MUTED] * 3
+colors = [WARN] + [MUTED] * 2 + [INK]
 bars = ax.bar(labels, epes, color=colors, width=0.6, zorder=3)
 for b, v in zip(bars, epes):
     ax.text(b.get_x() + b.get_width() / 2, v + 0.008, f'{v:.3f}',
@@ -47,14 +51,15 @@ for b, v in zip(bars, epes):
 ax.axhline(V2['epe'], color=WARN, ls='--', lw=1.4, zorder=2)
 ax.text(3.45, V2['epe'] + 0.006, f'NeuFlow v2: {V2["epe"]:.3f}', color=WARN,
         fontsize=9.5, ha='right', va='bottom')
-ax.set_ylim(2.0, 2.40)
+ax.set_ylim(2.25, 2.58)
 ax.set_ylabel('Mean end-point error, px  (lower is better)')
-ax.set_title('Accuracy on VKITTI2. Only the teal bar is a fair comparison with v2',
+ax.set_title('Accuracy on VKITTI2 with a verifiably frozen front end.\n'
+             'Every v3 configuration sits above v2: the decoder costs accuracy',
              loc='left', fontsize=12.5, fontweight='bold')
-ax.text(0, 2.34, 'fair\ncomparison', ha='center', fontsize=9, color=HL,
+ax.text(0, 2.555, 'like-for-like\n(+7.6% vs v2)', ha='center', fontsize=9,
+        color=WARN, style='italic', va='top')
+ax.text(3, 2.555, 'best v3\n(+2.6% vs v2)', ha='center', fontsize=9, color=INK,
         style='italic', va='top')
-ax.text(2.5, 2.34, 'trained on VKITTI2 imagery v2 never saw', ha='center',
-        fontsize=9, color=MUTED, style='italic', va='top')
 plt.tight_layout()
 plt.savefig(f'{OUT}/accuracy_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
@@ -71,7 +76,7 @@ for b, v in zip(bars, a1):
     ax.text(b.get_x() + b.get_width() / 2, v + 0.25, f'{v:.1f}',
             ha='center', fontsize=10.5, fontweight='bold')
 ax.set_xticks(x); ax.set_xticklabels(names, fontsize=9)
-ax.set_ylim(65, 82)
+ax.set_ylim(68, 82)
 ax.set_ylabel('Pixels within 1 px of ground truth, %  (higher is better)')
 ax.set_title('The cost that has not been paid down: sub-pixel precision',
              loc='left', fontsize=12.5, fontweight='bold')
@@ -88,17 +93,17 @@ print(f'{OUT}/precision_bars.png')
 fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
 modes = ['v2\nfull frame', 'v3 dense\n(stride 2)', 'v3 sparse\nfirst query',
          'v3 sparse\nrepeat query']
-vals = [19.6, 22.0, 19.16, 2.55]
+vals = [19.3, 22.0, 19.16, 2.55]
 cols = [WARN, MUTED, MUTED, HL]
 bars = ax.bar(modes, vals, color=cols, width=0.58, zorder=3)
 for b, v in zip(bars, vals):
     ax.text(b.get_x() + b.get_width() / 2, v + 0.4, f'{v:.1f} ms',
             ha='center', fontsize=11, fontweight='bold')
-ax.axhline(19.6, color=WARN, ls='--', lw=1.2, zorder=2)
+ax.axhline(19.3, color=WARN, ls='--', lw=1.2, zorder=2)
 ax.set_ylabel('Latency per frame pair, ms  (384x1248, fp16, V100)')
 ax.set_title('Speed: v3 is slower dense, level on a first query, 7.7x cheaper on repeats',
              loc='left', fontsize=12.5, fontweight='bold')
-ax.text(1, 23.4, '12% slower\nthan v2', ha='center', fontsize=9, color=WARN)
+ax.text(1, 23.4, '14% slower\nthan v2', ha='center', fontsize=9, color=WARN)
 ax.text(3, 4.6, '7.7x cheaper\n(v2 must recompute\nthe whole frame)',
         ha='center', fontsize=9, color=HL)
 ax.set_ylim(0, 26)
@@ -107,42 +112,40 @@ plt.savefig(f'{OUT}/speed_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/speed_bars.png')
 
-# =========================================================== 4. checkpoint noise
-# Evaluating step 90k and 100k of the SAME runs shows the between-run
-# differences are smaller than the between-checkpoint variation. Both
-# "ablations" reverse sign depending on which checkpoint is used.
-names = ['FlyingChairs', '+VKITTI2', '+MPI-Sintel', '+uncertainty']
-at90  = [2.294, 2.160, 2.109, 2.120]
-at100 = [2.286, 2.138, 2.147, 2.104]
+# =========================================================== 4. what the freeze cost
+# The same four configurations, trained with drifted vs verifiably frozen
+# BatchNorm statistics. The drift was worth ~0.25 px and produced the earlier
+# "v3 matches v2" result.
+names  = ['FlyingChairs', '+VKITTI2', '+MPI-Sintel', '+uncertainty']
+drift  = [2.286, 2.138, 2.147, 2.104]
+frozen = [2.500, 2.398, 2.392, 2.384]
 
 fig, ax = plt.subplots(figsize=(9.5, 5), dpi=150)
 x = np.arange(len(names))
-ax.plot(x, at90,  'o--', color=MUTED, lw=1.6, ms=9, label='step 90,000')
-ax.plot(x, at100, 'o-',  color=INK,   lw=1.8, ms=9, label='step 100,000')
-for xi, (a, b) in enumerate(zip(at90, at100)):
-    ax.plot([xi, xi], [a, b], color=WARN, lw=6, alpha=0.18, zorder=1,
-            solid_capstyle='round')
-    ax.text(xi + 0.10, (a + b) / 2, f'{abs(a-b):.3f}', fontsize=9, color=WARN,
-            va='center')
-ax.axhline(V2['epe'], color=WARN, ls='--', lw=1.2)
-ax.text(3.4, V2['epe'] + 0.005, f'v2: {V2["epe"]:.3f}', color=WARN, fontsize=9.5,
-        ha='right', va='bottom')
+ax.plot(x, drift,  'o--', color=MUTED, lw=1.6, ms=9, label='drifted normalisation statistics')
+ax.plot(x, frozen, 'o-',  color=INK,   lw=1.9, ms=9, label='verifiably frozen (correct)')
+for xi, (a, b) in enumerate(zip(drift, frozen)):
+    ax.plot([xi, xi], [a, b], color=WARN, lw=6, alpha=0.16, zorder=1, solid_capstyle='round')
+    ax.text(xi + 0.09, (a + b) / 2, f'+{b-a:.3f}', fontsize=9, color=WARN, va='center')
+ax.axhline(V2['epe'], color=WARN, ls='--', lw=1.3)
+ax.text(3.42, V2['epe'] - 0.008, f'NeuFlow v2: {V2["epe"]:.3f}', color=WARN,
+        fontsize=9.5, ha='right', va='top')
 ax.set_xticks(x); ax.set_xticklabels(names)
-ax.set_ylim(2.05, 2.36); ax.set_ylabel('Mean EPE, px')
+ax.set_ylim(2.05, 2.56); ax.set_ylabel('Mean EPE, px')
 ax.legend(frameon=False, loc='upper right')
-ax.set_title('Two checkpoints of the same runs: the spread between them is as large\n'
-             'as the differences between the runs',
+ax.set_title('What the BatchNorm drift was worth.\n'
+             'With statistics genuinely frozen, every configuration moves above v2',
              loc='left', fontsize=12, fontweight='bold')
 plt.tight_layout()
-plt.savefig(f'{OUT}/checkpoint_noise.png', bbox_inches='tight', facecolor='white')
+plt.savefig(f'{OUT}/freeze_effect.png', bbox_inches='tight', facecolor='white')
 plt.close()
-print(f'{OUT}/checkpoint_noise.png')
+print(f'{OUT}/freeze_effect.png')
 
 # =========================================================== 5. calibration (measured)
 # measured on v3_FlyingChairs_VKITTI2_Sintel_uncertainty/step_100000, 2026-08-02
 # (2,348,000 samples; the earlier figures in this slot came from the pre-leak-fix run)
-bins = ['0.01-0.11', '0.11-0.20', '0.20-0.41', '0.41-1.22', '1.22+']
-err = [0.313, 0.504, 0.807, 1.652, 6.723]
+bins = ['0.01-0.10', '0.10-0.19', '0.19-0.39', '0.39-1.22', '1.22+']
+err = [0.480, 0.896, 1.018, 1.837, 7.100]
 fig, ax = plt.subplots(figsize=(9, 4.8), dpi=150)
 bars = ax.bar(bins, err, color=HL, width=0.6, zorder=3)
 for b, v in zip(bars, err):
@@ -151,8 +154,8 @@ for b, v in zip(bars, err):
 ax.set_xlabel('Predicted error scale b, binned')
 ax.set_ylabel('Actual mean error, px')
 ax.set_title('The confidence signal is calibrated: predicted b tracks real error '
-             '(Pearson r = 0.345)', loc='left', fontsize=12, fontweight='bold')
-ax.text(0.02, 0.93, '21x span from the most to the least confident bin',
+             '(Pearson r = 0.318)', loc='left', fontsize=12, fontweight='bold')
+ax.text(0.02, 0.93, '15x span from the most to the least confident bin',
         transform=ax.transAxes, fontsize=9.5, color=MUTED)
 plt.tight_layout()
 plt.savefig(f'{OUT}/calibration_bars.png', bbox_inches='tight', facecolor='white')
@@ -167,8 +170,8 @@ ax.plot(ns, ms, 'o-', color=HL, lw=2, ms=9, zorder=3)
 for n, v in zip(ns, ms):
     ax.annotate(f'{v:.3f} ms', (n, v), textcoords='offset points',
                 xytext=(0, 12), ha='center', fontsize=10.5, fontweight='bold')
-ax.axhline(19.6, color=WARN, ls='--', lw=1.3)
-ax.text(2048, 18.6, 'v2 recomputes the whole frame: 19.6 ms',
+ax.axhline(19.3, color=WARN, ls='--', lw=1.3)
+ax.text(2048, 18.6, 'v2 recomputes the whole frame: 19.3 ms',
         color=WARN, fontsize=9.5, ha='right', va='top')
 ax.set_xlim(400, 2450); ax.set_ylim(0, 22)
 ax.set_xlabel('Queries per decode call, N')
