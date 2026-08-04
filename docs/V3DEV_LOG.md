@@ -706,3 +706,43 @@ Consequences for the completed runs:
 
 Re-running the four configurations with the corrected code is the clean fix
 (~5 h each).
+
+## 2026-08-03 -- Clean re-runs: the accuracy advantage was the BatchNorm drift
+
+Four configurations re-trained with the corrected freeze. Verification first:
+diag_backbone reports **0 of 137 shared tensors differing from v2** (previously
+45, with num_batches_tracked off by 24,765). The front end is now bit-identical,
+so this is the first genuine decoder-only comparison in the project.
+
+VKITTI2 Scene18+20, 1,174 pairs, fast_dense stride 2:
+
+  model                        drifted   frozen   delta
+  NeuFlow v2                     2.324    2.324       -
+  v3 FlyingChairs                2.286    2.500   +0.214
+  v3 + VKITTI2                   2.138    2.398   +0.260
+  v3 + MPI-Sintel                2.147    2.392   +0.245
+  v3 + uncertainty               2.104    2.384   +0.280
+
+1px accuracy, frozen: v2 77.63 | chairs 72.81 | +vk 75.74 | +si 75.83 | +unc 76.13
+
+**"v3 matches v2's accuracy" is withdrawn.** Every configuration is above v2. Best
+is 2.384 (+2.6%); like-for-like is 2.500 (+7.6%). The drift was worth ~0.25 px and
+was doing the work. The implicit decoder is simply less accurate than the convex
+upsampler it replaces, for the reason already diagnosed: its finest input is at
+1/8 resolution while v2's upsampler reads the full-resolution frame.
+
+Better news: the ordering is now monotonic (2.500 > 2.398 > 2.392 > 2.384) and
+stable, where the drifted runs flipped between checkpoints. Removing the confound
+produced a cleaner picture as well as a worse one.
+
+Calibration re-measured on the clean uncertainty checkpoint: monotonic across all
+five bins (0.480, 0.896, 1.018, 1.837, 7.100 px), 15x span, Pearson r = 0.318
+(was 0.345). Weaker but intact; the capability claim stands.
+
+Unaffected: sparse timing (coarse 16.61 ms + decode 2.55 ms), repeat-query
+advantage (2.55 vs 19.3 ms), parameter count (7.83 M vs 9.03 M), and exactness of
+sparse-vs-dense.
+
+Report, README, deck and all figures updated. The thesis claim is now a priced
+trade: 2.6% of mean accuracy for arbitrary-coordinate access, 7.7x cheaper repeat
+queries, calibrated confidence, and a 13% smaller model.

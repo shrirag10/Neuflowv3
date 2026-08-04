@@ -6,10 +6,11 @@ decoder that evaluates optical flow at arbitrary continuous coordinates**. The
 network answers queries instead of emitting a fixed-resolution map: cost scales
 with the number of points requested, O(N), rather than with image area, O(H×W).
 
-It matches v2's accuracy using 13% fewer parameters, and adds three things the
-fixed-resolution design cannot express: flow at sub-pixel coordinates, repeat
-queries against a cached frame at 7.7× lower cost, and a calibrated per-query
-confidence estimate.
+The decoder costs accuracy: 2.384 px against v2's 2.324 px, 2.6% worse. In
+exchange it adds three things v2 cannot do at all, from a model 13% smaller: flow
+at sub-pixel coordinates, repeat queries against a cached frame at 7.7× lower
+cost, and a calibrated per-query confidence estimate. This is a priced trade, not
+a free win.
 
 > MS Robotics thesis project · Northeastern University Field Robotics Lab
 > Full write-up: **[docs/NeuFlow_v3_Report.pdf](docs/NeuFlow_v3_Report.pdf)** (LaTeX source: `docs/NeuFlow_v3_Report.tex`)
@@ -28,20 +29,26 @@ NeuFlow v2 and NeuFlow v3 on the same VKITTI2 pair:
 
 | Model | Training data | EPE (px) | 1px % | 3px % | Params |
 |---|---|---|---|---|---|
-| NeuFlow v2 | FlyingThings | 2.324 | 77.63 | 89.80 | 9.03 M |
-| NeuFlow v3 | FlyingChairs | 2.286 | 71.30 | 87.57 | **7.83 M** |
-| NeuFlow v3 | + VKITTI2 | 2.138 | 76.38 | 89.46 | 7.83 M |
-| NeuFlow v3 | + MPI-Sintel | 2.147 | 76.81 | 89.56 | 7.83 M |
-| NeuFlow v3 | + uncertainty head | **2.104** | 76.88 | 89.61 | 7.83 M |
+| NeuFlow v2 | FlyingThings | **2.324** | **77.63** | **89.80** | 9.03 M |
+| NeuFlow v3 | FlyingChairs | 2.500 | 72.81 | 87.88 | **7.83 M** |
+| NeuFlow v3 | + VKITTI2 | 2.398 | 75.74 | 88.94 | 7.83 M |
+| NeuFlow v3 | + MPI-Sintel | 2.392 | 75.83 | 88.98 | 7.83 M |
+| NeuFlow v3 | + uncertainty head | 2.384 | 76.13 | 89.02 | 7.83 M |
 
-The **FlyingChairs row is the like-for-like comparison**: no driving imagery in
-training, mirroring v2, which likewise saw none. The two models are equivalent on
-it. The mixed-data rows train on VKITTI2 scenes from the same simulator as the
-test set, so they show what the architecture achieves given representative data
-rather than a fair-comparison advantage.
+**Every v3 configuration sits above v2.** The best is 2.6% worse on mean error and
+1.5 points worse on 1-pixel accuracy; the like-for-like comparison (FlyingChairs
+only, mirroring v2's own training) is 7.6% behind. The implicit decoder is less
+accurate than the convex upsampler it replaces, and §Limitations explains why.
 
-Scene18 and Scene20 are excluded from every training set, enforced in the loader
-and verified at pair and frame level before each run.
+Both the training split and the frozen front end are verified per run: Scene18 and
+Scene20 are excluded and checked at pair and frame level, and all 137 tensors
+shared with v2 are confirmed bit-identical after training.
+
+![freeze effect](docs/figures/freeze_effect.png)
+
+An earlier version of these results showed v3 at 2.10 to 2.29 px. Those runs had
+drifting BatchNorm statistics inside the supposedly frozen stack, worth about
+0.25 px. That is what made v3 appear to match v2.
 
 ### Compute
 
@@ -49,7 +56,7 @@ and verified at pair and frame level before each run.
 
 | Mode | Latency | Note |
 |---|---|---|
-| NeuFlow v2, full frame | 19.6 ms | its only mode |
+| NeuFlow v2, full frame | 19.3 ms | its only mode |
 | v3 sparse, first query on a new pair | 19.16 ms | equivalent to v2 |
 | **v3 sparse, repeat query on a cached pair** | **2.55 ms** | **7.7× cheaper** |
 | v3 dense output, stride 2 | 22.0 ms | not the intended mode |
@@ -61,7 +68,7 @@ irreducible and dominates a first query.
 **State reuse is the decisive property.** v2 keeps nothing between calls, so a
 second question about the same frame costs a full recomputation. v3 answers it
 from cached state. Decode latency is flat from N=800 to N=2,048 (2.553 vs
-2.554 ms) — launch-overhead bound, so 2,048 points cost the same as 800.
+2.554 ms), launch-overhead bound, so 2,048 points cost the same as 800.
 
 ### Calibrated uncertainty
 
@@ -69,7 +76,7 @@ from cached state. Decode latency is flat from N=800 to N=2,048 (2.553 vs
 
 An optional head predicts a per-query error scale `b` under a Laplace likelihood.
 Over 2,348,000 queries, actual error rises monotonically across all five
-confidence bins — a 21× span, Pearson r = 0.345. Usable for weighting
+confidence bins, a 15× span, Pearson r = 0.318. Usable for weighting
 correspondences in RANSAC, rejecting unreliable matches, or steering queries
 toward uncertain regions. **v2 emits flow alone and has no comparable output.**
 
@@ -178,17 +185,16 @@ docs/
 
 ## Limitations
 
-- **Sub-pixel precision** trails v2 by 0.8–6.3 points of 1px accuracy. Cause
-  identified: the decoder's finest input is 1/8 resolution, so evidence varies
-  little within an 8×8 cell, while v2's upsampler reads the full-resolution frame.
-  A Fourier positional encoding produced no change, showing the limitation is
-  missing high-resolution *features*, not missing positional information.
-- **Adapted normalisation statistics.** The frozen stack's learned weights are
-  unchanged, but its BatchNorm running statistics accumulated ~24,800 updates
-  during the reported runs instead of staying at v2's values. The comparison is
-  therefore v3-with-adapted-statistics against v2-with-FlyingThings-statistics,
-  not a decoder-only comparison, and out-of-domain robustness suffers as a result.
-  The training loop is fixed; re-runs with strictly frozen statistics are pending.
+- **Accuracy.** The decoder is less accurate than the upsampler it replaces: 2.6%
+  worse on mean error at best, 7.6% like-for-like. Cause identified: the decoder's
+  finest input is 1/8 resolution, so evidence varies little within an 8×8 cell,
+  while v2's upsampler reads the full-resolution frame. A Fourier positional
+  encoding produced no change, showing the limitation is missing high-resolution
+  *features*, not missing positional information.
+- **Sub-pixel querying is closer to interpolation than inference** for the same
+  reason. The interface is exact and the mechanism is real, but queries inside one
+  8×8 cell see nearly identical evidence, so the extra information returned
+  between pixels is small until the decoder gets full-resolution features.
 - **No embedded measurement.** All latency figures are V100 and RTX 4060.
 - **One evaluation domain.** VKITTI2 only; generalisation to field imagery
   untested.
@@ -196,12 +202,11 @@ docs/
   checkpoint-to-checkpoint variation up to 0.038 px, so differences below roughly
   0.05 px are not resolved.
 
-![checkpoint noise](docs/figures/checkpoint_noise.png)
-
-For applications consuming a full dense flow field once per frame, **NeuFlow v2
-remains the better choice** — 12% faster in that mode and more precise per pixel.
-v3 is the right choice when the consumer picks its own query points, revisits a
-frame, needs positions between pixels, or wants a confidence value.
+For applications consuming a full dense flow field once per frame, **NeuFlow v2 is
+the better choice on every axis**: more accurate, and 14% faster in that mode. v3
+earns its place when the consumer picks its own query points, revisits a frame,
+needs positions between pixels, or wants a confidence value, and when 2.6% of mean
+accuracy is an acceptable price.
 
 ---
 

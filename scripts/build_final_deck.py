@@ -4,7 +4,7 @@ Rewritten 2026-08-02 against the leak-free runs. Every number traces to a run
 in docs/V3DEV_LOG.md. Claims the data does not support have been removed:
 
   - "v3 dense is faster than v2"  -> FALSE on the corrected pipeline
-    (22.0 ms vs 19.6 ms). Was measured pre-BatchNorm-fix on other hardware.
+    (22.0 ms vs 19.3 ms). Was measured pre-BatchNorm-fix on other hardware.
   - "v3 beats v2 by 6% on EPE"    -> only with VKITTI2 in training, which v2
     never saw. The clean comparison is a tie on mean EPE and a loss on precision.
 
@@ -184,7 +184,7 @@ def main():
              'All of the above is v2, unmodified, with its weights frozen. v3 replaces only what comes next.',
              12, False, INK)
     rows = [['Measured on our hardware (V100, fp16, 384x1248)', ''],
-            ['Latency, full frame', '19.6 ms'],
+            ["Latency, full frame", "19.3 ms"],
             ['Parameters', '9.03 M'],
             ['Mean EPE, VKITTI2 Scene18+20', '2.324 px'],
             ['Pixels within 1 px', '77.63%']]
@@ -196,7 +196,7 @@ def main():
     note(s, "NeuFlow v2 is the lab's real-time flow network. Backbone, matching, refinement, "
             "then a convex upsampler that turns 1/8 resolution flow into full resolution. I "
             "freeze everything up to the coarse flow and change only the last stage. On our "
-            "V100 it runs a full frame in 19.6 milliseconds at 2.324 pixels of error. Its "
+            "V100 it runs a full frame in 19.3 milliseconds at 2.324 pixels of error. Its "
             "limitation is structural: the output is always the same size and always costs the "
             "same, whether you need one pixel or all of them.")
     footer(s, i)
@@ -276,24 +276,24 @@ def main():
 
     # ============================================================ 6 accuracy
     s, i = slide()
-    header(s, 'RESULTS', 'Accuracy: the fair comparison is a tie')
+    header(s, 'RESULTS', 'Accuracy: the decoder costs 2.6 percent')
     s.shapes.add_picture('results/plots/accuracy_bars.png', Inches(0.8), Inches(1.6),
                          width=Inches(7.3))
     add_text(s, 8.4, 1.75, 4.3, 3.6,
-             'Only the FlyingChairs run is a like-for-like\n'
-             'comparison with v2: it never saw driving\n'
-             'imagery, exactly as v2 never did.\n\n'
-             'It scores 2.286 against v2 at 2.324.\n'
-             'A 1.6% difference is a tie, not a win.\n\n'
-             'The other three train on VKITTI2 imagery\n'
-             'from the same simulator and camera as the\n'
-             'test scenes. Their better numbers measure\n'
-             'domain advantage, not a better method,\n'
-             'and I do not present them as beating v2.', 11.5, False, INK, 1.18)
+             'Every v3 configuration sits above v2.\n\n'
+             'Best: 2.384 against v2 at 2.324, so 2.6%\n'
+             'worse on mean error and 1.5 points worse\n'
+             'on 1-pixel accuracy.\n\n'
+             'Like-for-like, trained on FlyingChairs only\n'
+             'as v2 was, it is 2.500, or 7.6% behind.\n\n'
+             'The implicit decoder is less accurate than\n'
+             'the convex upsampler it replaces. The cause\n'
+             'is known and is not a training artefact:\n'
+             'see the precision slide.', 11.5, False, INK, 1.18)
     chip(s, 8.4, 5.45, 4.3, 0.95,
-         'The three mixes land between 2.10 and 2.16 px\n'
-         'and are not separable from one another.\n'
-         'See slide 9.', 10.5, BOX_LT)
+         'These replace an earlier set showing 2.10-2.29 px,\n'
+         'produced by runs whose frozen backbone was\n'
+         'silently drifting. See slide 9.', 10.5, BOX_LT)
     note(s, "Here is the accuracy picture. The teal bar is the only fair comparison, because "
             "that model trained on FlyingChairs alone and never saw a road, just as v2 never "
             "saw VKITTI2. It gets 2.286 against v2's 2.324. That is a tie. The grey bars are "
@@ -338,12 +338,12 @@ def main():
     s.shapes.add_picture('results/plots/speed_bars.png', Inches(1.3), Inches(1.6),
                          width=Inches(8.1))
     add_text(s, 9.7, 1.8, 3.1, 3.0,
-             'Dense: v3 is 12% slower\nthan v2. An earlier version\nof this deck claimed the\n'
+             'Dense: v3 is 14% slower\nthan v2. An earlier version\nof this deck claimed the\n'
              'opposite. That measurement\npredated the BatchNorm fix\nand used different\n'
              'hardware. Withdrawn.\n\n'
              'First sparse query: level\nwith v2, not faster.', 11.5, False, INK, 1.18)
     chip(s, 9.7, 5.0, 3.1, 1.4,
-         'The genuine win\n\nA second query on an\nalready-processed frame:\n2.6 ms against 19.6 ms.\n'
+         'The genuine win\n\nA second query on an\nalready-processed frame:\n2.6 ms against 19.3 ms.\n'
          'v2 has no cached state.', 10.5, BOX_LT, GOOD, bold=False)
     note(s, "Speed. Three of these four bars are not wins. Dense v3 is twelve percent slower "
             "than v2, and I want to flag that an earlier version of this deck claimed v3 dense "
@@ -351,30 +351,32 @@ def main():
             "GPU. It was wrong and I have withdrawn it. A first sparse query is level with v2, "
             "not faster, because the coarse pass dominates and you cannot avoid it. The real "
             "win is the fourth bar: asking a second question about a frame you have already "
-            "processed costs 2.6 milliseconds against v2's 19.6, because v2 has no cached "
+            "processed costs 2.6 milliseconds against v2's 19.3, because v2 has no cached "
             "state and must redo everything. That is structural, not a margin.")
     footer(s, i)
 
     # ============================================================ 9 what is resolvable
     s, i = slide()
-    header(s, 'RESULTS', 'What this experiment can and cannot resolve')
-    s.shapes.add_picture('results/plots/checkpoint_noise.png', Inches(0.75), Inches(1.6),
+    header(s, 'RESULTS', 'What the frozen-backbone fix was worth')
+    s.shapes.add_picture('results/plots/freeze_effect.png', Inches(0.75), Inches(1.6),
                          width=Inches(7.5))
     add_text(s, 8.55, 1.75, 4.2, 3.9,
-             'Evaluating step 90,000 and step 100,000\n'
-             'of the same four runs moves each result\n'
-             'by up to 0.038 px.\n\n'
-             'The differences between the runs are the\n'
-             'same size. Two orderings reverse:\n\n'
-             '  MPI-Sintel helps at 90k (-0.051),\n'
-             '  hurts at 100k (+0.009)\n\n'
-             '  the uncertainty head hurts at 90k\n'
-             '  (+0.011), helps at 100k (-0.043)\n\n'
-             'With one seed and one checkpoint,\n'
-             'neither question is answerable.', 11.5, False, INK, 1.16)
+             'BatchNorm updates its running statistics\n'
+             'on every forward pass in train mode,\n'
+             'whatever requires_grad says.\n\n'
+             'My first fix held them in eval mode once\n'
+             'per epoch. The validation block calls\n'
+             'model.train() again every 5,000 steps,\n'
+             'which silently re-enabled them.\n\n'
+             'Result: 24,765 updates during a run that\n'
+             'was supposed to be frozen, worth about\n'
+             '0.25 px, which is what made v3 look\n'
+             'equal to v2.\n\n'
+             'Now verified per checkpoint: all 137\n'
+             'shared tensors bit-identical to v2.', 11.5, False, INK, 1.16)
     chip(s, 0.75, 5.95, 7.5, 0.85,
-         'What IS robust: adding driving data to FlyingChairs gains about 0.15 px and 5 points of 1-pixel\n'
-         'accuracy at BOTH checkpoints. Everything finer than that is inside the noise.', 11)
+         'Every accuracy number in this deck comes from the frozen runs. The drifted ones are shown here only\n'
+         'to record what the error was worth.', 11)
     note(s, "I want to show you a slide that removes two of my own results. I had claimed two "
             "clean ablations: that Sintel adds nothing, and that the uncertainty head helps by "
             "two percent. Then I evaluated a second checkpoint of the same runs, ten thousand "
@@ -397,8 +399,8 @@ def main():
              'scale b alongside each flow value,\n'
              'trained with a Laplace likelihood.\n\n'
              'Binned by predicted b, real error rises\n'
-             'monotonically from 0.31 px to 6.72 px,\n'
-             'a 21x span. Pearson r = 0.345 over\n'
+             'monotonically from 0.48 px to 7.10 px,\n'
+             'a 15x span. Pearson r = 0.318 over\n'
              '2,348,000 samples.\n\n'
              'This is usable: weight correspondences\n'
              'in RANSAC, reject unreliable matches,\n'
@@ -475,11 +477,11 @@ def main():
     header(s, 'ASSESSMENT', 'Against the three objectives I set')
     rows = [
         ['Objective', 'Verdict', 'Evidence'],
-        ['Better accuracy than v2', 'NOT MET', 'fair comparison is 2.286 vs 2.324, a tie'],
-        ['', '', 'better numbers require in-domain training data'],
+        ['Better accuracy than v2', 'NOT MET', 'best v3 2.384 vs 2.324; every config above v2'],
+        ['', '', 'like-for-like 2.500, i.e. 7.6% behind'],
         ['', '', ''],
-        ['Less compute than v2', 'PARTLY', 'dense 12% slower; first query level'],
-        ['', '', 'repeat query 7.7x cheaper (2.6 vs 19.6 ms)'],
+        ['Less compute than v2', 'PARTLY', 'dense 14% slower; first query level'],
+        ['', '', 'repeat query 7.7x cheaper (2.6 vs 19.3 ms)'],
         ['', '', ''],
         ['Runs on edge devices', 'UNPROVEN', 'all figures from V100 and RTX 4060'],
         ['', '', 'no Jetson measurement has been taken'],
