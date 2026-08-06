@@ -184,3 +184,30 @@ plt.close()
 print(f'{OUT}/decode_flat.png')
 
 print('\nAll figures regenerated from the 2026-08-02 leak-free runs.')
+
+# =========================================================== 7. selective accuracy
+# Coverage-vs-error, derived from the calibration bins (each bin = 20% of the
+# 2,348,000 queries). Accepting only the most confident k bins:
+cov  = [20, 40, 60, 80, 100]
+v3   = [0.480, 0.688, 0.798, 1.058, 2.266]
+v2   = [V2['epe']] * len(cov)          # v2 has no confidence, so it cannot select
+
+fig, ax = plt.subplots(figsize=(9.5, 5.2), dpi=150)
+ax.plot(cov, v2, 's--', color=WARN, lw=2, ms=8, label='NeuFlow v2 (cannot select)')
+ax.plot(cov, v3, 'o-', color=HL, lw=2.4, ms=9, label='NeuFlow v3 (select by confidence)')
+for c, y in zip(cov, v3):
+    ax.annotate(f'{y:.2f}', (c, y), textcoords='offset points', xytext=(0, -16),
+                ha='center', fontsize=10, color=HL, fontweight='bold')
+ax.annotate('2.2x more accurate\nover 80% of the frame',
+            xy=(80, 1.058), xytext=(56, 1.72), fontsize=10.5, color=INK,
+            arrowprops=dict(arrowstyle='->', color=INK, lw=1.2))
+ax.set_xlabel('Coverage: percentage of queries accepted')
+ax.set_ylabel('Mean end-point error of the accepted set, px')
+ax.set_xlim(12, 108); ax.set_ylim(0, 2.6)
+ax.legend(frameon=False, loc='upper left')
+ax.set_title('Confidence lets v3 trade coverage for accuracy. v2 has one operating point',
+             loc='left', fontsize=12.5, fontweight='bold')
+plt.tight_layout()
+plt.savefig(f'{OUT}/selective_accuracy.png', bbox_inches='tight', facecolor='white')
+plt.close()
+print(f'{OUT}/selective_accuracy.png')
