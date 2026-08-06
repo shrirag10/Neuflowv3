@@ -1,12 +1,12 @@
 """Build docs/NeuFlow_v3_status.pptx.
 
-Advisor-meeting version: results forward, no development chronology. The
-debugging and methodology history lives in docs/V3DEV_LOG.md and the report;
-it is not what a progress meeting is for. The fuller deck builder is kept at
-scripts/archive/build_final_deck_full.py.
+Rewritten 2026-08-02 against the leak-free runs. Every number traces to a run
+in docs/V3DEV_LOG.md. Claims the data does not support have been removed:
 
-Every number traces to a verified run: leak-free splits, and a front end
-confirmed bit-identical to v2 (0 of 137 shared tensors differ).
+  - "v3 dense is faster than v2"  -> FALSE on the corrected pipeline
+    (22.0 ms vs 19.3 ms). Was measured pre-BatchNorm-fix on other hardware.
+  - "v3 beats v2 by 6% on EPE"    -> only with VKITTI2 in training, which v2
+    never saw. The clean comparison is a tie on mean EPE and a loss on precision.
 
 Monochrome academic style (Georgia, black/gray/white, thin rules).
 """
@@ -128,11 +128,11 @@ def main():
     add_text(s, 0.95, 6.25, 11.0, 0.4,
              'Shriman Raghav Srinivasan   ·   MS Robotics, Northeastern University   ·   '
              'Field Robotics Lab   ·   August 2026', 11, False, MUTED)
-    note(s, "Short version of where the project is. I replaced NeuFlow v2's fixed upsampler "
-            "with a decoder you can query at any coordinate. The headline result is that this "
-            "buys three capabilities v2 does not have, and costs 2.6 percent of mean accuracy, "
-            "and I will show you both sides. The most interesting result is the third slide "
-            "of results, on selective accuracy, so I would like to get there.")
+    note(s, "This is a status report on my thesis project. I want to be upfront that the "
+            "headline has changed since the last version of this deck. Earlier numbers were "
+            "contaminated by a train-test leak and by a BatchNorm bug, and when I fixed both, "
+            "two of my claims did not survive. I will show you what did survive and what did "
+            "not, and I will be explicit about which comparisons are fair.")
     footer(s, i)
 
     # ============================================================ 2 motivation
@@ -157,12 +157,13 @@ def main():
              'Replace only the upsampler with a decoder evaluated at requested\n'
              'coordinates, so cost scales with the number of questions asked\n'
              'rather than with image area.\n\n'
-             'Everything that follows is measured on held-out VKITTI2 scenes,\n'
-             '1,174 pairs, 460 million pixels.', 12, False, INK, 1.15)
+             'This report answers that question with measurements, including\n'
+             'the places where the answer is no.', 12, False, INK, 1.15)
     note(s, "The motivation is unchanged and I still believe it. Dense flow is the only "
             "product these networks offer, but registration, tracking and mapping all want a "
             "few hundred points that they choose. The question is whether you can make the "
-            "output queryable, and what that costs.")
+            "output queryable without paying for it elsewhere. Some of the answer is no, and "
+            "I will show you where.")
     footer(s, i)
 
     # ============================================================ 3 v2 foundation
@@ -234,9 +235,48 @@ def main():
             "cheap. That caching is the property that turns out to matter most.")
     footer(s, i)
 
+    # ============================================================ 5 methodology
+    s, i = slide()
+    header(s, 'METHODOLOGY', 'What I fixed before trusting any of these numbers')
+    add_text(s, 0.75, 1.65, 11.9, 0.4,
+             'An earlier version of this deck reported better results. Those numbers were wrong. '
+             'Three defects:', 12, False, INK)
+    rows = [
+        ['Defect', 'Effect', 'Fix'],
+        ['Train/test leak: VKITTI2 Scene18 and 20',
+         'models trained on the', 'val scenes excluded;'],
+        ['were in both training and evaluation',
+         'frames they were scored on', 'checked at pair and frame level'],
+        ['', '', ''],
+        ['BatchNorm updated running statistics',
+         'the "frozen" backbone drifted', 'BN held in eval mode;'],
+        ['in train mode despite requires_grad=False',
+         '0.35 px, 7x the effect studied', 'verified drift is exactly 0'],
+        ['', '', ''],
+        ['Runs differed in three variables at once',
+         'no comparison between them', 'all runs generated from one'],
+        ['(data, batch size, refinement schedule)',
+         'was valid', 'template; one variable each'],
+    ]
+    table(s, 0.75, 2.25, rows, [5.3, 3.5, 3.1], 10.5)
+    chip(s, 0.75, 5.35, 11.85, 1.1,
+         'Everything from here on: 1,174 held-out pairs, 460M pixels, per-pixel metrics, seed 1234, '
+         'identical hyperparameters.\nA 9-check pre-flight suite (scripts/verify_pipeline.py) passes on '
+         'CPU and GPU before any training run starts.', 11.5)
+    note(s, "I want to spend a slide on this because it is the reason to believe anything that "
+            "follows. Three defects. First, a train-test leak: two VKITTI2 scenes were in both "
+            "the training set and the evaluation set, so models were being scored on frames "
+            "they had trained on. Second, BatchNorm kept updating its running statistics even "
+            "though the backbone was supposed to be frozen, which moved the coarse flow by 0.35 "
+            "pixels, about seven times the effect I was trying to measure. Third, my runs "
+            "differed in three things at once, so no comparison between them meant anything. "
+            "All three are fixed, and there is now a pre-flight suite that checks all of it "
+            "before a job starts.")
+    footer(s, i)
+
     # ============================================================ 6 accuracy
     s, i = slide()
-    header(s, 'RESULTS', 'Accuracy: the decoder costs 2.6 percent on the mean')
+    header(s, 'RESULTS', 'Accuracy: the decoder costs 2.6 percent')
     s.shapes.add_picture('results/plots/accuracy_bars.png', Inches(0.8), Inches(1.6),
                          width=Inches(7.3))
     add_text(s, 8.4, 1.75, 4.3, 3.6,
@@ -248,16 +288,12 @@ def main():
              'as v2 was, it is 2.500, or 7.6% behind.\n\n'
              'The implicit decoder is less accurate than\n'
              'the convex upsampler it replaces. The cause\n'
-             'is diagnosed and has a proposed fix.\n\n'
-             'Mean error over every pixel is also the\n'
-             'case the decoder is least suited to. Two\n'
-             'slides on, the same model is twice as\n'
-             'accurate as v2 over 80 percent of the\n'
-             'frame, once it is allowed to abstain.', 11.5, False, INK, 1.18)
+             'is known and is not a training artefact:\n'
+             'see the precision slide.', 11.5, False, INK, 1.18)
     chip(s, 8.4, 5.45, 4.3, 0.95,
-         'Front end verified bit-identical to v2 on all\n'
-         '137 shared tensors, so this isolates the\n'
-         'decoder and nothing else.', 10.5, BOX_LT)
+         'These replace an earlier set showing 2.10-2.29 px,\n'
+         'produced by runs whose frozen backbone was\n'
+         'silently drifting. See slide 9.', 10.5, BOX_LT)
     note(s, "Here is the accuracy picture. The teal bar is the only fair comparison, because "
             "that model trained on FlyingChairs alone and never saw a road, just as v2 never "
             "saw VKITTI2. It gets 2.286 against v2's 2.324. That is a tie. The grey bars are "
@@ -298,26 +334,59 @@ def main():
 
     # ============================================================ 8 speed
     s, i = slide()
-    header(s, 'RESULTS', 'Speed: repeat queries are 7.7x cheaper')
+    header(s, 'RESULTS', 'Speed: one real win, and a claim I withdrew')
     s.shapes.add_picture('results/plots/speed_bars.png', Inches(1.3), Inches(1.6),
                          width=Inches(8.1))
     add_text(s, 9.7, 1.8, 3.1, 3.0,
-             'Dense output: v3 is 14%\nslower. That mode is not\nwhat the decoder is for.\n\n'
-             'A first sparse query is\nlevel with v2: the coarse\npass dominates and is\n'
-             'shared by both.\n\n'
-             'Everything after the first\nquery is where v3 wins.', 11.5, False, INK, 1.18)
+             'Dense: v3 is 14% slower\nthan v2. An earlier version\nof this deck claimed the\n'
+             'opposite. That measurement\npredated the BatchNorm fix\nand used different\n'
+             'hardware. Withdrawn.\n\n'
+             'First sparse query: level\nwith v2, not faster.', 11.5, False, INK, 1.18)
     chip(s, 9.7, 5.0, 3.1, 1.4,
          'The genuine win\n\nA second query on an\nalready-processed frame:\n2.6 ms against 19.3 ms.\n'
          'v2 has no cached state.', 10.5, BOX_LT, GOOD, bold=False)
-    note(s, "On speed I want to be precise about which claim I am making. Dense output is "
-            "fourteen percent slower, and that mode is not what the decoder is for. A first "
-            "sparse query is level with v2, because eighty-seven percent of the cost is the "
-            "coarse pass, which both share and which cannot be skipped since global matching "
-            "needs the whole image. The win is the fourth bar. Asking a second question about "
-            "a frame you have already processed costs 2.6 milliseconds against v2's 19.3, "
-            "because v2 keeps no state and has to redo everything. Anything that revisits a "
-            "frame gets that: iterative registration, RANSAC refinement, a user inspecting a "
-            "scene. That is structural, not a margin.")
+    note(s, "Speed. Three of these four bars are not wins. Dense v3 is twelve percent slower "
+            "than v2, and I want to flag that an earlier version of this deck claimed v3 dense "
+            "was faster. That measurement was taken before the BatchNorm fix and on a different "
+            "GPU. It was wrong and I have withdrawn it. A first sparse query is level with v2, "
+            "not faster, because the coarse pass dominates and you cannot avoid it. The real "
+            "win is the fourth bar: asking a second question about a frame you have already "
+            "processed costs 2.6 milliseconds against v2's 19.3, because v2 has no cached "
+            "state and must redo everything. That is structural, not a margin.")
+    footer(s, i)
+
+    # ============================================================ 9 what is resolvable
+    s, i = slide()
+    header(s, 'RESULTS', 'What the frozen-backbone fix was worth')
+    s.shapes.add_picture('results/plots/freeze_effect.png', Inches(0.75), Inches(1.6),
+                         width=Inches(7.5))
+    add_text(s, 8.55, 1.75, 4.2, 3.9,
+             'BatchNorm updates its running statistics\n'
+             'on every forward pass in train mode,\n'
+             'whatever requires_grad says.\n\n'
+             'My first fix held them in eval mode once\n'
+             'per epoch. The validation block calls\n'
+             'model.train() again every 5,000 steps,\n'
+             'which silently re-enabled them.\n\n'
+             'Result: 24,765 updates during a run that\n'
+             'was supposed to be frozen, worth about\n'
+             '0.25 px, which is what made v3 look\n'
+             'equal to v2.\n\n'
+             'Now verified per checkpoint: all 137\n'
+             'shared tensors bit-identical to v2.', 11.5, False, INK, 1.16)
+    chip(s, 0.75, 5.95, 7.5, 0.85,
+         'Every accuracy number in this deck comes from the frozen runs. The drifted ones are shown here only\n'
+         'to record what the error was worth.', 11)
+    note(s, "I want to show you a slide that removes two of my own results. I had claimed two "
+            "clean ablations: that Sintel adds nothing, and that the uncertainty head helps by "
+            "two percent. Then I evaluated a second checkpoint of the same runs, ten thousand "
+            "steps earlier, and both conclusions reversed. Sintel helps at 90k and hurts at "
+            "100k. The uncertainty head hurts at 90k and helps at 100k. The differences I was "
+            "interpreting are smaller than the variation between checkpoints of a single run. "
+            "So with one seed and one checkpoint I cannot answer either question, and I am not "
+            "going to pretend otherwise. What is robust is the coarse effect: adding driving "
+            "data gains about 0.15 pixels at both checkpoints. To resolve anything finer I "
+            "would need multiple seeds and an average over late checkpoints.")
     footer(s, i)
 
     # ============================================================ 10 calibration
@@ -346,32 +415,6 @@ def main():
             "correspondences in RANSAC, drop unreliable ones, or send more queries where the "
             "model is unsure. v2 has no equivalent output, so there is nothing to compare it "
             "against.")
-    footer(s, i)
-
-    # ============================================================ 10b selective accuracy
-    s, i = slide()
-    header(s, 'RESULTS', 'Confidence buys the accuracy back: 2.2x better over 80% of the frame')
-    s.shapes.add_picture('results/plots/selective_accuracy.png', Inches(0.8), Inches(1.6),
-                         width=Inches(8.2))
-    add_text(s, 9.35, 1.8, 3.5, 3.6,
-             'Mean error over every pixel is\none operating point, and it is\nthe only one v2 has.\n\n'
-             'With a confidence value per\nquery, v3 has a curve.\n\n'
-             'Drop the least confident 20%\nand error falls to 1.06 px,\n'
-             'against v2 at 2.32.\n\n'
-             'Keep the best fifth and it is\n0.48 px, nearly 5x better.', 11.5, False, INK, 1.18)
-    chip(s, 9.35, 5.6, 3.5, 1.0,
-         'For registration and mapping,\nwhere you pick your points\nanyway, abstaining is free.',
-         10.5, BOX_LT, GOOD)
-    note(s, "This is the slide I would most like your reaction to. The accuracy table earlier "
-            "reports mean error over every pixel, which is the only operating point v2 has, "
-            "because it cannot tell you which of its outputs to trust. v3 can, so instead of a "
-            "point it has a curve. Discard the least confident fifth of queries and error on "
-            "what remains falls to 1.06 pixels, against v2's 2.32 over the whole frame. So more "
-            "than twice as accurate over eighty percent of the image. Keep only the most "
-            "confident fifth and it is 0.48, close to five times better. Why this is not just a "
-            "statistical trick: for registration and mapping you are choosing a few hundred "
-            "points anyway, so declining to answer where the model is unsure costs you nothing. "
-            "Same 2.35 million queries as the calibration bins on the previous slide.")
     footer(s, i)
 
     # ============================================================ 11 query interface
