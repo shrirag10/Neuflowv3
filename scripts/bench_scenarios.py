@@ -153,7 +153,7 @@ def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key,
     marginal_ms ADDITIONAL cost of answering box 2 given box 1 was answered
     """
     flows, first, marginal, area = [], 0.0, 0.0, 0
-    sparse_epes, sparse_n = [], []
+    sparse_epes, sparse_n, sparse_fails = [], [], []
 
     if pol == 'v2_full':
         dense, ms = eng.full_frame_v2(img0, img1)
@@ -226,17 +226,28 @@ def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key,
             torch.cuda.synchronize(); d_ms = (time.perf_counter() - t0) * 1000
             if i == 0: first = c_ms + d_ms
             else:      marginal += d_ms
-            # error at those points against GT
-            gxy = gt[:, np.clip(pxy[:, 1].astype(int), 0, gt.shape[1] - 1),
-                        np.clip(pxy[:, 0].astype(int), 0, gt.shape[2] - 1)].T
-            e = torch.norm(fl[0].float() - gxy, dim=-1)
+            # error at those points against GT, EXCLUDING invalid pixels.
+            # VKITTI2 stores unusable values where flow is occluded or leaves
+            # the frame; without this filter the mean is dominated by them
+            # (measured: 58 px instead of ~0.6).
+            yi = np.clip(pxy[:, 1].astype(int), 0, gt.shape[1] - 1)
+            xi = np.clip(pxy[:, 0].astype(int), 0, gt.shape[2] - 1)
+            vsel = valid[yi, xi].bool()
+            if vsel.sum() < 8:
+                sparse_epes.append(None); continue
+            gxy = gt[:, yi, xi].T
+            e = torch.norm(fl[0].float() - gxy, dim=-1)[vsel]
+            mg = torch.norm(gxy, dim=-1)[vsel]
             sparse_epes.append(float(e.mean()))
-            sparse_n.append(len(pxy))
+            bigm = mg > 8
+            if bigm.any():
+                sparse_fails.append(float((e[bigm] > 3).float().mean()))
+            sparse_n.append(int(vsel.sum()))
 
     epes, fails = [], []
     if pol == 'v3_sparse':
         epes = [x for x in sparse_epes if x is not None]
-        return first, marginal, epes, [], area
+        return first, marginal, epes, sparse_fails, area
     for f, b in zip(flows, boxes):
         e, fa, n = epe_in(f, gt, valid, b)
         if e is not None:
