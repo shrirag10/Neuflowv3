@@ -137,8 +137,13 @@ def main():
                     d['big'] += (e[big] > 3).sum().item(); d['bign'] += big.sum().item()
 
     full_area = H * W
+    dev_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu'
     print(f'\nROI {args.roi}x{args.roi} at full resolution, error scored inside the ROI only')
-    print(f'VKITTI2 Scene18+20, {len(pairs)} pairs, {H}x{W} frames\n')
+    print(f'VKITTI2 Scene18+20, {len(pairs)} pairs, {H}x{W} frames')
+    print(f'device: {dev_name}')
+    print('Crop savings depend on whether the device is compute bound or launch\n'
+          'bound at this size: shrinking the area cannot shrink a fixed number of\n'
+          'kernel launches. Report the speedup per device, not as one figure.\n')
     print(f'{"model":6s} {"margin":>7s} {"area%":>7s} {"EPE":>8s} {"vs full":>9s} '
           f'{"ms":>7s} {"speedup":>8s} {"fail%":>7s}')
     print('-' * 66)
