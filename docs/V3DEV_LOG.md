@@ -746,3 +746,61 @@ sparse-vs-dense.
 Report, README, deck and all figures updated. The thesis claim is now a priced
 trade: 2.6% of mean accuracy for arbitrary-coordinate access, 7.7x cheaper repeat
 queries, calibrated confidence, and a 13% smaller model.
+
+## 2026-08-07 -- Fast-platform ROI scenarios (advisor's framing)
+
+Advisor reframed the project: a fast platform cannot afford full-frame flow, so
+flow only the region that matters. Three scenarios: S1 first encounter, S2 turn
+with overlapping objects, S3 a new object appearing in a frame already started.
+
+**Harness bugs found before trusting any number.** A full-margin sanity check
+(where every policy must collapse to the full-frame case and agree) caught:
+
+1. **Padded-frame query offset.** decode_queries takes coordinates in the PADDED
+   frame the coarse state was built on. FlowEngine.query_region and
+   query_gui.query/region all passed raw frame coordinates. VKITTI2 pads by
+   (6, 4), so every sub-region query landed several pixels off: v3_full read
+   0.570 px where it should read 0.471. Worth **0.099 px**, and the GUI's click
+   and region modes had been silently wrong the whole time. Audited all 11
+   decode call sites; the rest were correct (padded grids that unpad afterwards,
+   or explicit pl/pt offsets). Regression test added to verify_pipeline.py.
+2. **Unequal stride**, v3_full at 1 and v3_crop at 2, making v3_full look 4x
+   more expensive. Now shared.
+3. **Missing validity mask in v3_sparse**, which included VKITTI2's unusable
+   occluded pixels and reported 58 px instead of ~0.6.
+
+**Crop savings are device dependent; the accuracy cost is not.** Same script,
+same 40 pairs, same margins (scripts/eval_roi_crop.py):
+
+    device        full frame   crop @32px   speedup   EPE penalty
+    RTX 4060        33.3 ms       7.6 ms     4.38x      +0.034
+    Tesla V100      17.8 ms      15.1 ms     1.18x      +0.034
+
+Identical accuracy to three decimals, since it is the same computation. The
+V100 is launch-overhead bound at this size, so removing 86% of the pixels
+removes almost no work; the weaker GPU is compute bound and converts area
+reduction nearly linearly. **This points the right way for the thesis: the
+technique pays off on constrained hardware, which is the deployment target, and
+not on a datacenter GPU.** Report per device, never as one figure.
+
+Margin behaviour (both devices): zero margin costs +0.432 px and fails 24% of
+large-motion pixels, because global matching loses the context it needs. 32 px
+on 26.6 px mean motion costs +0.034 and is the knee; beyond it nothing improves.
+Design rule: **margin ~ expected inter-frame motion ~ speed / frame rate.**
+
+**Scenario results** (V100, 60 pairs, ROI 192x192, margin 32, stride 2):
+
+    S3 new object      +2nd ROI    total     EPE
+    v3_full              3.61 ms   24.6 ms   1.754
+    v2_full              0    ms   17.8 ms   1.746
+    v2_crop             17.52 ms   35.6 ms   3.598
+    v3_crop             19.91 ms   40.2 ms   3.610
+
+The queryable decoder answers a newly appeared object for 3.6 ms against 17.5 ms
+for either cropped policy, a 4.9x advantage, and it is structural: a crop must
+run a whole new coarse pass for anything outside its box, and loses accuracy
+badly doing it. But v2_full still wins on TOTAL cost here (17.8 ms), because on
+a V100 the coarse pass is cheap enough that cropping saves nothing. Two disjoint
+crops cost more than one full frame: **crop once, or not at all.**
+
+v3_sparse re-run pending after the validity-mask fix.
