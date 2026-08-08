@@ -286,6 +286,29 @@ nothing improves. The rule is \textbf{margin $\approx$ expected inter-frame
 motion $\approx$ speed / frame rate}, so a faster platform needs a larger margin
 and saves proportionally less.
 
+\subsection{The rule across two motion scales}
+Tested on aerial sequences, which move very differently from driving: 9.26\px\
+mean in-region displacement against 26.6\px.
+
+\begin{center}
+\small
+\begin{tabular}{lrrr}
+\toprule
+Domain & Mean motion & Margin needed & Penalty there \\
+\midrule
+Driving & 26.6\px & $\sim$32\px & +0.034\px \\
+Aerial & 9.26\px & $\sim$8\px & +0.120\px \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Both begin at the same 0.43\px\ penalty with no margin, and both have shed most
+of it once the margin reaches one frame of motion. The requirement is therefore
+set by displacement rather than by image size, and can be sized from platform
+speed and frame rate before any flow is computed. The agreement is close up to
+that point; the residual beyond it differs by scene, so this predicts the scale
+of the margin rather than the exact curve.
+
 \subsection{A new object mid-frame}
 \begin{center}
 \small

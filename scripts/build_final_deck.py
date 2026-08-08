@@ -433,6 +433,30 @@ def main():
             "is on the next slide.")
     footer(s, i)
 
+    # ============================================================ 10c3 margin rule, two domains
+    s, i = slide()
+    header(s, 'RESULTS', 'The margin rule holds across two motion scales')
+    s.shapes.add_picture('results/plots/margin_rule.png', Inches(1.05), Inches(1.6),
+                         width=Inches(11.2))
+    add_text(s, 0.75, 5.9, 11.9, 1.1,
+             'Driving sequences average 26.6 px of motion and need about 32 px of margin. Aerial sequences average 9.26 px and\n'
+             'need about 8. Both start from the same 0.43 px penalty with no margin, and both have shed most of it by the point\n'
+             'where the margin equals one frame of motion. The requirement is set by displacement, not by image size, which\n'
+             'makes it predictable from platform speed and frame rate before any flow is computed.', 11.5, False, INK, 1.15)
+    note(s, "I wanted to know whether the margin rule was a curve fitted to one dataset or "
+            "something more general, so I tested it on aerial sequences, which move very "
+            "differently: nine point three pixels per frame against twenty six point six for "
+            "driving. The prediction was that the margin needed should scale with the motion, "
+            "so the knee should move from thirty two pixels down to about nine. It did. On the "
+            "left you can see the two need different absolute margins. On the right, dividing "
+            "by the mean motion, both start at the same penalty and both have lost most of it "
+            "by the point where the margin equals one frame of motion. I will be precise "
+            "about the limits: the agreement is good up to that point and the residuals differ "
+            "beyond it, so this predicts the scale rather than the exact curve. That is still "
+            "enough to size a margin from speed and frame rate before running anything, which "
+            "is what a platform designer needs.")
+    footer(s, i)
+
     # ============================================================ 10d scenario 3
     s, i = slide()
     header(s, 'RESULTS', 'A new object appears: 1.7 ms, against 7.3 for a new crop')

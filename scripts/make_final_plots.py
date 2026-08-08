@@ -293,3 +293,43 @@ plt.tight_layout(rect=[0, 0, 1, 0.94])
 plt.savefig(f'{OUT}/scenario3_marginal.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/scenario3_marginal.png')
+
+# =========================================================== 10. margin rule, two datasets
+# scripts/eval_roi_crop.py --dataset {vkitti2,tartanair}
+# If the margin requirement is set by motion, plotting the penalty against
+# margin/motion should collapse two very different datasets onto one curve.
+vk_motion, ta_motion = 26.6, 9.26
+vk_m   = np.array([0, 16, 32, 64, 128]);      vk_pen = np.array([0.432, 0.328, 0.034, 0.009, -0.002])
+ta_m   = np.array([0, 8, 16, 24, 32, 64]);    ta_pen = np.array([0.424, 0.120, 0.091, 0.098, 0.053, 0.012])
+
+fig, (axl, axr) = plt.subplots(1, 2, figsize=(12, 4.8), dpi=150)
+
+axl.plot(vk_m, vk_pen, 'o-', color=INK,  lw=2.2, ms=8, label=f'driving, {vk_motion} px motion')
+axl.plot(ta_m, ta_pen, 's-', color=HL,   lw=2.2, ms=8, label=f'aerial, {ta_motion} px motion')
+axl.axhline(0, color=MUTED, ls=':', lw=1.1)
+axl.set_xlabel('Crop margin, px'); axl.set_ylabel('EPE penalty vs full frame, px')
+axl.legend(frameon=False, fontsize=10)
+axl.set_title('Raw margin: the two need different amounts',
+              loc='left', fontsize=11.5, fontweight='bold')
+
+axl2 = axr
+axl2.plot(vk_m / vk_motion, vk_pen, 'o-', color=INK, lw=2.2, ms=8, label='driving')
+axl2.plot(ta_m / ta_motion, ta_pen, 's-', color=HL,  lw=2.2, ms=8, label='aerial')
+axl2.axvline(1.0, color=WARN, ls='--', lw=1.4)
+axl2.text(1.08, 0.36, 'margin = one frame\nof motion', color=WARN, fontsize=9.5)
+axl2.axhline(0, color=MUTED, ls=':', lw=1.1)
+axl2.set_xlabel('Margin / mean motion'); axl2.set_ylabel('EPE penalty vs full frame, px')
+axl2.set_xlim(-0.3, 7.2)
+axl2.legend(frameon=False, fontsize=10)
+axl2.set_title('Scaled by motion: most of the penalty is gone by one frame',
+               loc='left', fontsize=11.5, fontweight='bold')
+axl2.text(0.30, 0.905, 'both fall from 0.43 to about 0.12 by ratio 1;\n'
+                       'the residual beyond that differs by scene',
+          transform=axl2.transAxes, fontsize=8.5, color=MUTED, va='top')
+
+fig.suptitle('The margin a region needs is set by how far things move, not by the image size',
+             fontsize=12.5, x=0.01, ha='left', fontweight='bold')
+plt.tight_layout(rect=[0, 0, 1, 0.94])
+plt.savefig(f'{OUT}/margin_rule.png', bbox_inches='tight', facecolor='white')
+plt.close()
+print(f'{OUT}/margin_rule.png')

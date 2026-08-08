@@ -93,9 +93,21 @@ not optional: with none, error rises 65% and a quarter of large-motion pixels
 fail, because global matching loses the context it needs. Past 32 px nothing
 improves.
 
-**Design rule: margin ≈ expected inter-frame motion ≈ speed ÷ frame rate.** Mean
-motion here is 26.6 px and the knee is at 32. Note this applies to any flow
-network — it is a platform technique, not a property of the decoder.
+**Design rule: margin ≈ expected inter-frame motion ≈ speed ÷ frame rate.**
+Verified across two motion scales:
+
+![margin rule](docs/figures/margin_rule.png)
+
+| Domain | Mean motion | Margin needed | Penalty there |
+|---|---|---|---|
+| Driving | 26.6 px | ~32 px | +0.034 px |
+| Aerial | 9.26 px | ~8 px | +0.120 px |
+
+Both start at the same 0.43 px penalty with no margin and shed most of it once
+the margin reaches one frame of motion, so the requirement is set by
+displacement rather than image size and can be sized from speed and frame rate
+in advance. Note this applies to any flow network — it is a platform technique,
+not a property of the decoder.
 
 **A new object appearing mid-frame** is the case specific to this architecture:
 
