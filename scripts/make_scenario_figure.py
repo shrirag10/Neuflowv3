@@ -58,7 +58,14 @@ def main():
     i0 = cv2.cvtColor(cv2.imread(p0), cv2.COLOR_BGR2RGB)
     i1 = cv2.cvtColor(cv2.imread(p1), cv2.COLOR_BGR2RGB)
 
-    eng = FlowEngine(args.checkpoint, None)
+    # the uncertainty head widens the last convex layer by one row, so a
+    # checkpoint trained with it will not load into a model built without it.
+    # Read the width off the checkpoint rather than making the caller remember.
+    from utils.load_model import my_load_weights
+    sd = my_load_weights(args.checkpoint)
+    unc = any(k.endswith('.bias') and 'convex_head' in k and v.shape[0] == 11
+              for k, v in sd.items())
+    eng = FlowEngine(args.checkpoint, None, uncertainty=unc)
     H, W = i0.shape[:2]
 
     eng.warmup(H, W)
