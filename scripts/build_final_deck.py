@@ -374,6 +374,56 @@ def main():
             "Same 2.35 million queries as the calibration bins on the previous slide.")
     footer(s, i)
 
+    # ============================================================ 10c ROI crop, device dependence
+    s, i = slide()
+    header(s, 'RESULTS', 'Flowing only part of the frame: where it pays')
+    s.shapes.add_picture('results/plots/roi_crop_devices.png', Inches(1.35), Inches(1.6),
+                         width=Inches(10.6))
+    add_text(s, 0.75, 5.95, 11.9, 1.1,
+             'Same script, same 40 pairs, same margins, two devices. The accuracy cost of cropping is fixed at +0.034 px; the\n'
+             'speed benefit is 4.4x on an RTX 4060 and 1.18x on a V100. The V100 finishes a full frame in 17.8 ms and is bound by\n'
+             'kernel launches, not pixels, so removing 86% of the area removes almost no work. Constrained hardware is compute\n'
+             'bound and converts the saving nearly in full, which is the deployment case.', 11.5, False, INK, 1.15)
+    note(s, "This is the platform finding, and I want to be clear that it applies to any "
+            "flow network, not just mine. Crop to a region with a margin and you keep full "
+            "resolution where you are looking. The accuracy cost is small and fixed: thirty "
+            "four thousandths of a pixel at a thirty-two pixel margin, identical on both "
+            "devices because it is the same computation. The speed benefit is not fixed at "
+            "all. On the laptop GPU it is four point four times. On the V100 it is one point "
+            "one eight, and at large margins it is actually slower. The reason is that the "
+            "V100 already does the whole frame in under eighteen milliseconds and is bound by "
+            "the number of kernel launches rather than the number of pixels, and cropping "
+            "does not reduce the launch count. The useful part is the direction: this "
+            "technique pays off precisely on the constrained hardware a drone would carry, "
+            "and looks pointless on a datacentre GPU. So the number has to be quoted per "
+            "device. The margin itself follows a rule: it needs to be about one frame of "
+            "expected motion, which is speed over frame rate. Below that, global matching "
+            "loses the context it needs and a quarter of the large-motion pixels fail.")
+    footer(s, i)
+
+    # ============================================================ 10d scenario 3
+    s, i = slide()
+    header(s, 'RESULTS', 'A new object appears: 1.7 ms, against 7.3 for a new crop')
+    s.shapes.add_picture('results/plots/scenario3_marginal.png', Inches(1.35), Inches(1.6),
+                         width=Inches(10.6))
+    add_text(s, 0.75, 5.95, 11.9, 1.1,
+             'The third scenario: a frame is already being processed when something new enters the field of view. Because the\n'
+             'coarse pass is cached, the decoder answers for 1.7 ms. A cropped pipeline has to run an entire new pass, 7.3 ms,\n'
+             'and is markedly less accurate doing it because a fresh crop loses the global context that finds large motion.\n'
+             'v2 keeps no state between calls, so it has nothing to answer from.', 11.5, False, INK, 1.15)
+    note(s, "This is the scenario you described where the repeat query matters, and it is the "
+            "one result that is specific to this architecture rather than to cropping. A frame "
+            "is already in flight, and a new object enters the field of view. Because the "
+            "coarse pass is cached, answering costs one point seven milliseconds for eight "
+            "hundred points. A cropped pipeline cannot reuse anything: the new object is "
+            "outside its box, so it runs a whole new pass at seven point three milliseconds, "
+            "four times more, and the answer is worse, three point six pixels against two "
+            "point one, because a fresh crop has lost the surrounding context. NeuFlow v2 "
+            "keeps no state at all between calls. The general point is that this buys you the "
+            "ability to answer a question you did not know you would have when the frame "
+            "arrived, which on a moving platform is most of them.")
+    footer(s, i)
+
     # ============================================================ 11 query interface
     s, i = slide()
     header(s, 'INTERFACE', 'What a query costs, and how you make one')
