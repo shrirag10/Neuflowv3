@@ -29,6 +29,29 @@ from utils.load_model import my_load_weights, load_with_new_keys
 from eval_vkitti2 import build_vkitti2_val_pairs, read_vkitti2_flow
 
 
+def load_pairs(dataset, root, limit):
+    """(img0_path, img1_path, loader) for either dataset.
+
+    The loader returns (flow [2,H,W] tensor, valid [H,W] tensor) so the rest of
+    this script does not care which dataset it is looking at.
+    """
+    if dataset == 'vkitti2':
+        raw = build_vkitti2_val_pairs(root, ['Scene18', 'Scene20'])
+        step = max(1, len(raw) // limit)
+        return [(a, b, (lambda f=f: read_vkitti2_flow(f))) for a, b, f in raw[::step][:limit]]
+
+    from data_utils.tartanair import build_pairs, read_flow
+    raw = build_pairs(root, limit=limit)
+
+    def mk(fp, mp):
+        def _l():
+            fl, va = read_flow(fp, mp, valid_is_zero=True)   # established by --check
+            return (torch.from_numpy(fl).permute(2, 0, 1),
+                    torch.from_numpy(va.astype('float32')))
+        return _l
+    return [(a, b, mk(f, m)) for a, b, f, m in raw]
+
+
 def make(ckpt, implicit, dev, head='convex'):
     m = NeuFlow(use_implicit=implicit, head_mode=head).to(dev)
     load_with_new_keys(m, my_load_weights(ckpt),
@@ -79,13 +102,12 @@ def main():
     ap.add_argument('--roi', type=int, default=192, help='ROI side in pixels')
     ap.add_argument('--margins', type=int, nargs='+', default=[0, 16, 32, 64, 128])
     ap.add_argument('--limit', type=int, default=40)
+    ap.add_argument('--dataset', default='vkitti2', choices=['vkitti2', 'tartanair'])
     args = ap.parse_args()
 
     dev = torch.device('cuda'); amp = True
-    pairs = build_vkitti2_val_pairs(args.dataset_root, ['Scene18', 'Scene20'])
-    step = max(1, len(pairs) // args.limit)
-    pairs = pairs[::step][:args.limit]
-    print(f'{len(pairs)} pairs, ROI {args.roi}x{args.roi}')
+    pairs = load_pairs(args.dataset, args.dataset_root, args.limit)
+    print(f'{len(pairs)} pairs from {args.dataset}, ROI {args.roi}x{args.roi}')
 
     models = {'v3': (make(args.checkpoint, True, dev), True),
               'v2': (make(args.v2_checkpoint, False, dev), False)}
@@ -95,12 +117,13 @@ def main():
     def slot(k):
         return acc.setdefault(k, dict(s=0.0, n=0, ms=[], area=[], big=0, bign=0))
 
-    for p1, p2, pf in tqdm(pairs):
+    mags = []
+    for p1, p2, loader in tqdm(pairs):
         i1 = cv2.cvtColor(cv2.imread(p1), cv2.COLOR_BGR2RGB)
         i2 = cv2.cvtColor(cv2.imread(p2), cv2.COLOR_BGR2RGB)
         t1 = torch.from_numpy(i1).permute(2, 0, 1).float()[None].to(dev)
         t2 = torch.from_numpy(i2).permute(2, 0, 1).float()[None].to(dev)
-        gt, valid = read_vkitti2_flow(pf)
+        gt, valid = loader()
         gt = gt.to(dev); vmask = valid.to(dev).bool()
         H, W = gt.shape[-2:]
 
@@ -116,6 +139,8 @@ def main():
         gt_roi = gt[:, y0:y1, x0:x1]
         v_roi = vmask[y0:y1, x0:x1]
         mag = torch.norm(gt_roi, dim=0)[v_roi]
+        if mag.numel():
+            mags.append(float(mag.mean()))
 
         for name, (model, implicit) in models.items():
             # full-frame reference
@@ -139,7 +164,10 @@ def main():
     full_area = H * W
     dev_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'cpu'
     print(f'\nROI {args.roi}x{args.roi} at full resolution, error scored inside the ROI only')
-    print(f'VKITTI2 Scene18+20, {len(pairs)} pairs, {H}x{W} frames')
+    mean_mag = float(np.mean(mags)) if mags else float('nan')
+    print(f'{args.dataset}, {len(pairs)} pairs, {H}x{W} frames')
+    print(f'mean GT motion inside the ROI: {mean_mag:.2f} px  '
+          f'-> margin ~ motion predicts a knee near {mean_mag:.0f} px')
     print(f'device: {dev_name}')
     print('Crop savings depend on whether the device is compute bound or launch\n'
           'bound at this size: shrinking the area cannot shrink a fixed number of\n'
