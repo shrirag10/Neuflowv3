@@ -253,3 +253,43 @@ plt.tight_layout(rect=[0, 0, 1, 0.94])
 plt.savefig(f'{OUT}/roi_crop_devices.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/roi_crop_devices.png')
+
+# =========================================================== 9. scenario 3: marginal cost
+# A new object appears in a frame already being processed. What does answering
+# it cost? scripts/bench_scenarios.py --limit 60, RTX 4060, 60 VKITTI2 pairs.
+labels = ['v3 sparse\n(800 pts)', 'v3 full\n(dense ROI)', 'v2 crop\n(new pass)', 'v3 crop\n(new pass)']
+marg   = [1.68, 4.36, 7.29, 8.23]
+eperr  = [2.099, 1.769, 3.600, 3.610]
+cols   = [HL, INK, MUTED, MUTED]
+
+fig, (axl, axr) = plt.subplots(1, 2, figsize=(12, 4.8), dpi=150)
+
+bars = axl.bar(labels, marg, color=cols, width=0.6, zorder=3)
+for b, v in zip(bars, marg):
+    axl.text(b.get_x() + b.get_width()/2, v + 0.15, f'{v:.2f} ms',
+             ha='center', fontsize=11, fontweight='bold')
+axl.set_ylabel('Cost of answering the new object, ms')
+axl.set_ylim(0, 9.6)
+axl.set_title('Scenario 3: a new object appears mid-frame',
+              loc='left', fontsize=12, fontweight='bold')
+axl.annotate('4.3x cheaper than\nopening a new crop',
+             xy=(0, 1.68), xytext=(0.55, 5.2), fontsize=10, color=HL,
+             arrowprops=dict(arrowstyle='->', color=HL, lw=1.2))
+
+bars = axr.bar(labels, eperr, color=cols, width=0.6, zorder=3)
+for b, v in zip(bars, eperr):
+    axr.text(b.get_x() + b.get_width()/2, v + 0.07, f'{v:.2f}',
+             ha='center', fontsize=11, fontweight='bold')
+axr.set_ylabel('EPE on the new object, px')
+axr.set_ylim(0, 4.3)
+axr.set_title('and what that answer is worth', loc='left', fontsize=12, fontweight='bold')
+axr.text(0.03, 0.93, 'a fresh crop is both slower AND worse: it loses the\n'
+                     'global context that finds large motion',
+         transform=axr.transAxes, fontsize=9, color=MUTED, va='top')
+
+fig.suptitle('Answering an unanticipated question about a frame already in flight',
+             fontsize=12.5, x=0.01, ha='left', fontweight='bold')
+plt.tight_layout(rect=[0, 0, 1, 0.94])
+plt.savefig(f'{OUT}/scenario3_marginal.png', bbox_inches='tight', facecolor='white')
+plt.close()
+print(f'{OUT}/scenario3_marginal.png')

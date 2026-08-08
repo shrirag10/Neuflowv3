@@ -70,6 +70,48 @@ second question about the same frame costs a full recomputation. v3 answers it
 from cached state. Decode latency is flat from N=800 to N=2,048 (2.553 vs
 2.554 ms), launch-overhead bound, so 2,048 points cost the same as 800.
 
+### Flowing only part of the frame
+
+A fast platform cannot afford full-frame flow every frame. Cropping to a region
+of interest keeps full resolution where you are looking and spends nothing
+elsewhere — but what it buys depends entirely on the device.
+
+![roi crop](docs/figures/roi_crop_devices.png)
+
+| Device | Full frame | Crop @32 px | Speedup | EPE penalty |
+|---|---|---|---|---|
+| RTX 4060 (laptop) | 33.3 ms | 7.6 ms | **4.38×** | +0.034 px |
+| Tesla V100 | 17.8 ms | 15.1 ms | 1.18× | +0.034 px |
+
+Same script, same pairs, same margins. Accuracy cost is identical to three
+decimals; only speed differs. The V100 is bound by kernel launches rather than
+pixels at this size, so removing 86% of the area removes almost no work. The
+weaker device is compute bound and converts the saving nearly in full — which is
+the deployment case. **Quote this per device, never as one figure.** Note also
+that cropping applies to any flow network: it is a platform technique, not a
+property of the decoder.
+
+**Margin rule.** With no margin, error rises 0.432 px and 24% of large-motion
+pixels fail, because global matching loses the context it needs. A 32 px margin
+on 26.6 px mean motion costs 0.034 px and is the knee. So
+**margin ≈ expected inter-frame motion ≈ speed ÷ frame rate**.
+
+**A new object appearing mid-frame** is the case specific to this architecture:
+
+![scenario 3](docs/figures/scenario3_marginal.png)
+
+| Policy | Cost of the new object | EPE on it |
+|---|---|---|
+| **v3, sparse queries (800 pts)** | **1.68 ms** | 2.10 px |
+| v3, dense ROI | 4.36 ms | 1.77 px |
+| v2, new crop | 7.29 ms | 3.60 px |
+| v3, new crop | 8.23 ms | 3.61 px |
+
+The coarse pass is cached, so the decoder answers for 1.68 ms. A cropped pipeline
+runs an entire new pass and is less accurate doing it. v2 keeps no state between
+calls. Two disjoint crops cost more than one full frame, so: **crop once, or not
+at all.**
+
 ### Calibrated uncertainty
 
 ![calibration](docs/figures/calibration_bars.png)

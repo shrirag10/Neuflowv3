@@ -249,6 +249,70 @@ full-frame coarse pass, or a cropped mode running the whole pipeline on the
 selection so cost scales with the area requested. Both print their latency
 breakdown live.
 
+\section{Flowing only part of the frame}
+A fast platform cannot afford full-frame flow every frame, so it flows only the
+region that matters. Three questions follow: what cropping to a region costs,
+when it pays, and what happens when a new object appears in a frame already being
+processed.
+
+\subsection{Cropping: fixed accuracy cost, device-dependent speed}
+\begin{center}
+\small
+\begin{tabular}{lrrrr}
+\toprule
+Device & Full frame & Crop @32\,px & Speedup & EPE penalty \\
+\midrule
+RTX 4060 (laptop) & 33.3\ms & 7.6\ms & \textbf{4.38$\times$} & +0.034\px \\
+Tesla V100 & 17.8\ms & 15.1\ms & 1.18$\times$ & +0.034\px \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Same script, same 40 pairs, same margins. The accuracy cost is identical to three
+decimals because it is the same computation; only the speed benefit differs. The
+V100 completes a full frame in 17.8\ms\ and is bound by the number of kernel
+launches rather than by pixels, so removing 86\% of the area removes almost no
+work. The weaker device is compute bound and converts the reduction nearly in
+full. This points the right way for deployment: the technique pays off on
+constrained hardware and looks pointless on a datacentre GPU, so the figure has
+to be quoted per device.
+
+Cropping applies to any flow network, v2 included. It is a platform technique,
+not a property of the queryable decoder.
+
+\subsection{The margin rule}
+A crop removes the context global matching uses to find large displacement. With
+no margin, error rises 0.432\px\ and 24\% of large-motion pixels fail outright. A
+32\px\ margin on 26.6\px\ mean motion costs 0.034\px\ and is the knee; beyond it
+nothing improves. The rule is \textbf{margin $\approx$ expected inter-frame
+motion $\approx$ speed / frame rate}, so a faster platform needs a larger margin
+and saves proportionally less.
+
+\subsection{A new object mid-frame}
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+Policy & Cost of the new object & EPE on it \\
+\midrule
+v3, sparse queries (800 pts) & \textbf{1.68\ms} & 2.10\px \\
+v3, dense ROI & 4.36\ms & 1.77\px \\
+v2, new crop & 7.29\ms & 3.60\px \\
+v3, new crop & 8.23\ms & 3.61\px \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Because the coarse pass is cached, the decoder answers a newly appeared object
+for 1.68\ms. A cropped pipeline must run an entire new pass and is markedly less
+accurate doing so, having lost the global context. NeuFlow v2 keeps no state
+between calls and has nothing to answer from. This is the one result in this
+section specific to the architecture rather than to cropping: answering a
+question that was not anticipated when the frame arrived.
+
+Two disjoint crops cost more than one full frame, so the policy rule is to crop
+once or not at all.
+
 \section{What v3 is for}
 The contribution is an operating point, not a leaderboard position. v3 trades
 2.6\% of mean accuracy and 1.5 points of 1-pixel accuracy for three properties the
