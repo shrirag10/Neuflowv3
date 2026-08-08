@@ -73,7 +73,7 @@ def main():
 
     wide = (W / H) > 2.0                      # driving frames are very wide
     fig, axes = plt.subplots(3, 2,
-                             figsize=(16, 7.2) if wide else (11, 9.6), dpi=140,
+                             figsize=(16, 7.2) if wide else (12, 8.8), dpi=140,
                              gridspec_kw={'width_ratios': [1.55, 1] if wide else [1, 1]})
 
     for r, sc in enumerate(['S1', 'S2', 'S3']):
@@ -94,8 +94,14 @@ def main():
             ax.text(lx, ly, 'tracked' if bi == 0 else 'new',
                     color='white', fontsize=10, fontweight='bold',
                     bbox=dict(facecolor=col, edgecolor='none', pad=1.6))
-        ax.set_title(f'{sc}   {title}   —   {sub}', fontsize=11.5,
-                     loc='left', fontweight='bold', color=INK)
+        # on 4:3 frames each axis is only half the figure wide, so the one-line
+        # form runs under the right-hand title. Wrap it instead.
+        if wide:
+            ax.set_title(f'{sc}   {title}   —   {sub}', fontsize=11.5,
+                         loc='left', fontweight='bold', color=INK)
+        else:
+            ax.set_title(f'{sc}   {title}\n{sub}', fontsize=10.5,
+                         loc='left', fontweight='bold', color=INK)
         ax.set_xticks([]); ax.set_yticks([])
 
         # right: the flow actually returned inside those regions
@@ -108,7 +114,8 @@ def main():
         for bi, b in enumerate(boxes):
             ax.add_patch(Rectangle((b[0], b[1]), b[2] - b[0], b[3] - b[1],
                                    fill=False, edgecolor=HL if bi == 0 else WARN, lw=1.6))
-        ax.set_title('flow returned — computed only inside the regions',
+        ax.set_title('flow returned — computed only inside the regions' if wide
+                     else 'flow returned\ncomputed only inside the regions',
                      fontsize=10.5, loc='left', color=INK)
         ax.set_xticks([]); ax.set_yticks([])
 
