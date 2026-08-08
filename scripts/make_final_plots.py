@@ -27,6 +27,26 @@ plt.rcParams.update({
 
 INK, MUTED, HL, WARN = '#1a1a1a', '#8a8a8a', '#0b6a63', '#b03030'
 OUT = 'results/plots'
+
+# DECK_FIGS=1 writes a second set under results/plots/deck with the figure-level
+# titles suppressed, because on a slide the action title already carries the
+# claim and repeating it inside the plot sets the same sentence twice in two
+# typefaces. Panel titles on multi-panel figures are kept: they label which
+# panel is which, which the slide title cannot do. Default output is unchanged,
+# so the report and the paper keep the self-contained titled figures they need.
+if os.environ.get('DECK_FIGS'):
+    OUT = 'results/plots/deck'
+    matplotlib.figure.Figure.suptitle = lambda self, *a, **k: None
+    _set_title = matplotlib.axes.Axes.set_title
+    matplotlib.axes.Axes.set_title = (
+        lambda self, *a, **k: None if len(self.figure.axes) == 1
+        else _set_title(self, *a, **k))
+    # The deck is monochrome. Categories that the report separates by hue are
+    # separated here by value instead, which survives a projector, a greyscale
+    # handout and the two most common forms of colour blindness. Reference
+    # lines already carry a dash pattern, so they stay distinguishable.
+    HL, WARN = '#000000', '#6E6E6E'
+
 os.makedirs(OUT, exist_ok=True)
 
 # ---- measured, leak-free, fast_dense stride 2 -----------------------------
