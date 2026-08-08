@@ -316,15 +316,15 @@ axl2 = axr
 axl2.plot(vk_m / vk_motion, vk_pen, 'o-', color=INK, lw=2.2, ms=8, label='driving')
 axl2.plot(ta_m / ta_motion, ta_pen, 's-', color=HL,  lw=2.2, ms=8, label='aerial')
 axl2.axvline(1.0, color=WARN, ls='--', lw=1.4)
-axl2.text(1.08, 0.36, 'margin = one frame\nof motion', color=WARN, fontsize=9.5)
+axl2.text(1.08, 0.28, 'margin = one frame\nof motion', color=WARN, fontsize=9.5)
 axl2.axhline(0, color=MUTED, ls=':', lw=1.1)
 axl2.set_xlabel('Margin / mean motion'); axl2.set_ylabel('EPE penalty vs full frame, px')
 axl2.set_xlim(-0.3, 7.2)
 axl2.legend(frameon=False, fontsize=10)
 axl2.set_title('Scaled by motion: most of the penalty is gone by one frame',
                loc='left', fontsize=11.5, fontweight='bold')
-axl2.text(0.30, 0.905, 'both fall from 0.43 to about 0.12 by ratio 1;\n'
-                       'the residual beyond that differs by scene',
+axl2.text(0.42, 0.99, 'both fall from 0.43 to about 0.12 by ratio 1;\n'
+                      'the residual beyond that differs by scene',
           transform=axl2.transAxes, fontsize=8.5, color=MUTED, va='top')
 
 fig.suptitle('The margin a region needs is set by how far things move, not by the image size',
