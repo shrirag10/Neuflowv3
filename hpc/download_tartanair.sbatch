@@ -23,28 +23,23 @@ DEST=/scratch/$USER/neuflow_datasets/tartanair
 mkdir -p "$DEST" /scratch/$USER/dl_logs
 cd "$DEST"
 
-$PY - <<'PYEOF'
-import os, boto3
-from botocore import UNSIGNED
-from botocore.client import Config
+# The AirLab bucket is on port 8080, which this cluster's squid proxy rejects
+# (403), and the Cloudflare R2 mirror needs signed S3 requests (400). The
+# HuggingFace mirror is plain HTTPS on 443 and works: verified 200 with the
+# exact manifest size. curl -L follows HF's redirect to its CDN; -C - resumes.
+BASE=https://huggingface.co/datasets/theairlabcmu/tartanair/resolve/main
 
-EP = "https://airlab-cloud.andrew.cmu.edu:8080/swift/v1/AUTH_ac8533a83cff4d48bc8c608ad222d330"
-cl = boto3.client("s3", endpoint_url=EP, config=Config(signature_version=UNSIGNED))
-
-envs  = ['amusement', 'carwelding']
-parts = ['image_left.zip', 'flow_flow.zip', 'flow_mask.zip']
-
-for env in envs:
-    for part in parts:
-        key = f'{env}/Easy/{part}'
-        out = key.replace('/', '_')
-        if os.path.isfile(out):
-            print('exists', out, flush=True); continue
-        print('downloading', key, flush=True)
-        cl.download_file('tartanair', key, out)
-        print('  done', out, os.path.getsize(out) / 1e9, 'GB', flush=True)
-print('DOWNLOAD_DONE', flush=True)
-PYEOF
+for env in amusement carwelding; do
+  for part in image_left flow_flow flow_mask; do
+    out="${env}_Easy_${part}.zip"
+    if [ -s "$out" ]; then echo "exists $out"; continue; fi
+    echo "downloading $env/Easy/$part.zip"
+    curl -fL -C - --retry 5 --retry-delay 10 -o "$out" \
+         "$BASE/$env/Easy/$part.zip" || { echo "FAILED $out" >&2; exit 1; }
+    echo "  done $out $(du -h "$out" | cut -f1)"
+  done
+done
+echo DOWNLOAD_DONE
 
 for z in *.zip; do
   echo "unzip $z"
