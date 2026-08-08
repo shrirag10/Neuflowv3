@@ -13,6 +13,16 @@ Four policies, measured on each:
   v3_full   v3 full-frame coarse pass, decode only inside the ROIs
   v3_crop   v3 coarse pass on ROI + margin, decode inside
 
+  v3_sparse N corner points inside the ROI rather than a dense field. This is
+            the mode the queryable decoder is for, and the only one where the
+            marginal cost of a second ROI is the flat ~2.5 ms figure: decode is
+            launch-overhead bound only up to about 2,048 points. A dense
+            192x192 ROI is 36,864 points and is compute bound instead.
+
+All v3 policies decode at the same stride so the comparison is like-for-like;
+an earlier version had v3_full at stride 1 and v3_crop at stride 2, which made
+v3_full look 4x more expensive than it is.
+
 The number that separates them is not total cost but the MARGINAL cost of the
 second ROI. v2_full has already computed everything, so its marginal cost is
 zero -- but it paid the most up front. The cropped policies must run a whole new
@@ -37,7 +47,7 @@ from data_utils import frame_utils
 from eval_vkitti2 import build_vkitti2_val_pairs, read_vkitti2_flow
 from flow_engine import FlowEngine
 
-POLICIES = ['v2_full', 'v2_crop', 'v3_full', 'v3_crop']
+POLICIES = ['v2_full', 'v2_crop', 'v3_full', 'v3_crop', 'v3_sparse']
 
 
 # --------------------------------------------------------------------------- v2 crop
@@ -135,13 +145,15 @@ def inside(inner, outer, margin):
 
 
 # --------------------------------------------------------------------------- run one
-def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key):
+def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key,
+               stride=2, n_sparse=800):
     """Returns (first_ms, marginal_ms, [epe per box], [fail per box], area_px).
 
     first_ms    cost of answering box 1
     marginal_ms ADDITIONAL cost of answering box 2 given box 1 was answered
     """
     flows, first, marginal, area = [], 0.0, 0.0, 0
+    sparse_epes, sparse_n = [], []
 
     if pol == 'v2_full':
         dense, ms = eng.full_frame_v2(img0, img1)
@@ -163,7 +175,8 @@ def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key):
         c_ms = eng.coarse_ms
         area = img0.shape[0] * img0.shape[1]
         for i, b in enumerate(boxes):
-            f, _, d_ms = eng.query_region(eng.state, b[0], b[1], b[2] - b[0], b[3] - b[1])
+            f, _, d_ms = eng.query_region(eng.state, b[0], b[1], b[2] - b[0], b[3] - b[1],
+                                          stride=stride)
             flows.append(f)
             if i == 0: first = c_ms + d_ms
             else:      marginal += d_ms         # decode only, state is cached
@@ -172,7 +185,7 @@ def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key):
         # crop around box 1. A second box already covered by that crop is free,
         # because the crop was densely decoded. One outside costs a whole new pass.
         b = boxes[0]
-        dense, ext, c_ms, d_ms = v3_crop_dense(eng, img0, img1, b, margin)
+        dense, ext, c_ms, d_ms = v3_crop_dense(eng, img0, img1, b, margin, stride=stride)
         first = c_ms + d_ms
         area += (ext[2] - ext[0]) * (ext[3] - ext[1])
         flows.append(dense[b[1] - ext[1]:b[3] - ext[1], b[0] - ext[0]:b[2] - ext[0]])
@@ -182,13 +195,48 @@ def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key):
                                    b2[0] - ext[0]:b2[2] - ext[0]])
                 marginal += 0.0                 # already inside the decoded crop
             else:
-                d2, ext2, c2, dd2 = v3_crop_dense(eng, img0, img1, b2, margin)
+                d2, ext2, c2, dd2 = v3_crop_dense(eng, img0, img1, b2, margin, stride=stride)
                 flows.append(d2[b2[1] - ext2[1]:b2[3] - ext2[1],
                                 b2[0] - ext2[0]:b2[2] - ext2[0]])
                 marginal += c2 + dd2
                 area += (ext2[2] - ext2[0]) * (ext2[3] - ext2[1])
 
+    elif pol == 'v3_sparse':
+        # N corner points inside each ROI: the intended use, and the regime
+        # where decode cost is flat in N
+        eng.coarse(img0, img1, key=key)
+        c_ms = eng.coarse_ms
+        area = img0.shape[0] * img0.shape[1]
+        pad = eng.state.get('_padder')
+        ox = pad._pad[0] if pad is not None else 0
+        oy = pad._pad[2] if pad is not None else 0
+        g = cv2.cvtColor(img0, cv2.COLOR_RGB2GRAY)
+        for i, b in enumerate(boxes):
+            sub = g[b[1]:b[3], b[0]:b[2]]
+            pts = cv2.goodFeaturesToTrack(sub, maxCorners=n_sparse,
+                                          qualityLevel=0.005, minDistance=3)
+            if pts is None or len(pts) < 8:
+                sparse_epes.append(None); continue
+            pxy = pts.reshape(-1, 2) + np.array([b[0], b[1]], dtype=np.float32)
+            q = torch.from_numpy(pxy).float().to(eng.dev)[None]
+            q = q + torch.tensor([ox, oy], device=eng.dev, dtype=q.dtype)
+            torch.cuda.synchronize(); t0 = time.perf_counter()
+            with torch.no_grad(), torch.amp.autocast('cuda', enabled=eng.amp):
+                fl = eng.v3.decode_queries(eng.state, query_coords=q)
+            torch.cuda.synchronize(); d_ms = (time.perf_counter() - t0) * 1000
+            if i == 0: first = c_ms + d_ms
+            else:      marginal += d_ms
+            # error at those points against GT
+            gxy = gt[:, np.clip(pxy[:, 1].astype(int), 0, gt.shape[1] - 1),
+                        np.clip(pxy[:, 0].astype(int), 0, gt.shape[2] - 1)].T
+            e = torch.norm(fl[0].float() - gxy, dim=-1)
+            sparse_epes.append(float(e.mean()))
+            sparse_n.append(len(pxy))
+
     epes, fails = [], []
+    if pol == 'v3_sparse':
+        epes = [x for x in sparse_epes if x is not None]
+        return first, marginal, epes, [], area
     for f, b in zip(flows, boxes):
         e, fa, n = epe_in(f, gt, valid, b)
         if e is not None:
@@ -206,6 +254,10 @@ def main():
     ap.add_argument('--margin', type=int, default=32,
                     help='pixels; 32 matches the measured knee at 26.6 px mean motion')
     ap.add_argument('--limit', type=int, default=40)
+    ap.add_argument('--stride', type=int, default=2,
+                    help='decode stride for the dense v3 policies; shared so they compare')
+    ap.add_argument('--n_sparse', type=int, default=800,
+                    help='corner points per ROI for v3_sparse')
     ap.add_argument('--sanity', action='store_true',
                     help='full-frame-sized margin: every policy must agree with '
                          'the known full-frame numbers')
@@ -247,7 +299,8 @@ def main():
 
             for pol in POLICIES:
                 f, m, epes, fails, area = run_policy(
-                    pol, eng, i0, i1, boxes, margin, gt, valid, key=f'{idx}')
+                    pol, eng, i0, i1, boxes, margin, gt, valid, key=f'{idx}',
+                    stride=args.stride, n_sparse=args.n_sparse)
                 d = acc[(sc, pol)]
                 d['first'].append(f); d['marg'].append(m)
                 d['epe'] += epes; d['fail'] += [x for x in fails if not np.isnan(x)]
