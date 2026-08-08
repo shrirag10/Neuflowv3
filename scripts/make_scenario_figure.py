@@ -73,7 +73,9 @@ def main():
 
     wide = (W / H) > 2.0                      # driving frames are very wide
     fig, axes = plt.subplots(3, 2,
-                             figsize=(16, 7.2) if wide else (12, 8.8), dpi=140,
+                             # a 4:3 panel is only ~2.9 in wide at this height, so a
+                             # 12 in figure leaves a gutter the images do not fill
+                             figsize=(16, 7.2) if wide else (9.0, 8.8), dpi=140,
                              gridspec_kw={'width_ratios': [1.55, 1] if wide else [1, 1]})
 
     for r, sc in enumerate(['S1', 'S2', 'S3']):
@@ -100,7 +102,7 @@ def main():
             ax.set_title(f'{sc}   {title}   —   {sub}', fontsize=11.5,
                          loc='left', fontweight='bold', color=INK)
         else:
-            ax.set_title(f'{sc}   {title}\n{sub}', fontsize=10.5,
+            ax.set_title(f'{sc}   {title}\n{sub}', fontsize=9.5,
                          loc='left', fontweight='bold', color=INK)
         ax.set_xticks([]); ax.set_yticks([])
 

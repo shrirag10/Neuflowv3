@@ -429,7 +429,20 @@ simple policy: crop once, or not at all.
 
 \subsection{Cross-Domain Comparison}
 
-On aerial sequences the decoder is ahead of the baseline at all seven margin
+\IfFileExists{../results/plots/scenarios_tartanair.png}{%
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{../results/plots/scenarios_tartanair.png}
+\caption{The same three scenarios on aerial sequences, whose mean inter-frame
+motion is a third of the driving case. The region geometry and the decoder
+configuration are identical to Fig.~\ref{fig:scenarios}; only the domain
+changes, and no model in this study was trained on it.}
+\label{fig:scenarios_air}
+\end{figure*}%
+\newcommand{\airfig}{ (Fig.~\ref{fig:scenarios_air})}}{\newcommand{\airfig}{}}
+
+On aerial sequences\airfig{} the decoder is ahead of the
+baseline at all seven margin
 settings tested, by 0.004 to 0.029\px\ (0.777 against 0.781 at full frame). We
 note this is the only unconfounded direct comparison in the study: every driving
 result is measured on a domain the decoder trained on and the baseline did not,
