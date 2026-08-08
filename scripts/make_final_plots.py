@@ -211,3 +211,45 @@ plt.tight_layout()
 plt.savefig(f'{OUT}/selective_accuracy.png', bbox_inches='tight', facecolor='white')
 plt.close()
 print(f'{OUT}/selective_accuracy.png')
+
+# =========================================================== 8. ROI crop: device dependence
+# Same script, same 40 VKITTI2 pairs, same margins, two devices.
+# scripts/eval_roi_crop.py --limit 40
+margins   = [0, 16, 32, 64, 128]
+sp_4060   = [4.26, 4.38, 4.38, 4.12, 3.35]     # RTX 4060 laptop, full = 33.3 ms
+sp_v100   = [1.18, 1.17, 1.18, 1.13, 1.12]     # Tesla V100,      full = 17.8 ms
+epe_crop  = [1.089, 0.985, 0.691, 0.667, 0.655]
+EPE_FULL  = 0.657
+
+fig, (axl, axr) = plt.subplots(1, 2, figsize=(12, 4.8), dpi=150)
+
+axl.plot(margins, sp_4060, 'o-', color=HL, lw=2.2, ms=9, label='RTX 4060 (33.3 ms full frame)')
+axl.plot(margins, sp_v100, 's-', color=WARN, lw=2.2, ms=8, label='Tesla V100 (17.8 ms full frame)')
+axl.axhline(1.0, color=MUTED, ls=':', lw=1.2)
+for m, v in zip(margins, sp_4060):
+    axl.annotate(f'{v:.1f}x', (m, v), textcoords='offset points', xytext=(0, 9),
+                 ha='center', fontsize=9.5, color=HL, fontweight='bold')
+axl.set_xlabel('Crop margin, px'); axl.set_ylabel('Speedup over full frame')
+axl.set_ylim(0, 5.2)
+axl.legend(frameon=False, fontsize=9.5, loc='center right')
+axl.set_title('Speed: entirely device dependent', loc='left', fontsize=12, fontweight='bold')
+axl.text(0.03, 0.06, 'the weaker GPU is compute bound, so less area is less work;\n'
+                     'the V100 is launch bound, and fewer pixels do not mean fewer kernels',
+         transform=axl.transAxes, fontsize=8.5, color=MUTED)
+
+axr.plot(margins, epe_crop, 'o-', color=INK, lw=2.2, ms=9)
+axr.axhline(EPE_FULL, color=WARN, ls='--', lw=1.4)
+axr.text(128, EPE_FULL - 0.02, f'full frame: {EPE_FULL:.3f}', color=WARN,
+         fontsize=9.5, ha='right', va='top')
+axr.annotate('32 px margin:\n+0.034 px, and it stops improving',
+             xy=(32, 0.691), xytext=(52, 0.95), fontsize=9.5, color=INK,
+             arrowprops=dict(arrowstyle='->', color=INK, lw=1.1))
+axr.set_xlabel('Crop margin, px'); axr.set_ylabel('EPE inside the ROI, px')
+axr.set_title('Accuracy: identical on both devices', loc='left', fontsize=12, fontweight='bold')
+
+fig.suptitle('Cropping to a region of interest: the accuracy cost is fixed, the speed benefit is not',
+             fontsize=12.5, x=0.01, ha='left', fontweight='bold')
+plt.tight_layout(rect=[0, 0, 1, 0.94])
+plt.savefig(f'{OUT}/roi_crop_devices.png', bbox_inches='tight', facecolor='white')
+plt.close()
+print(f'{OUT}/roi_crop_devices.png')
