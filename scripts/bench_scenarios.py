@@ -35,7 +35,7 @@ from tqdm import tqdm
 
 from data_utils import frame_utils
 from eval_vkitti2 import build_vkitti2_val_pairs, read_vkitti2_flow
-from video_region_gui import FlowEngine
+from flow_engine import FlowEngine
 
 POLICIES = ['v2_full', 'v2_crop', 'v3_full', 'v3_crop']
 
@@ -58,6 +58,34 @@ def v2_crop_region(eng, img0, img1, box, margin):
     torch.cuda.synchronize(); ms = (time.perf_counter() - t0) * 1000
     dense = padder.unpad(out[0]).float().cpu().numpy().transpose(1, 2, 0)
     return dense[y0 - cy0:y1 - cy0, x0 - cx0:x1 - cx0], ms, (cx1 - cx0) * (cy1 - cy0)
+
+
+def v3_crop_dense(eng, img0, img1, box, margin, stride=2):
+    """v3 on box+margin, returning the dense flow for the WHOLE crop.
+
+    crop_region() slices to the requested box and does not expose the coarse
+    state, so a second box inside the same crop cannot be decoded from it. The
+    crop is densely decoded anyway, so returning all of it is both cheaper and
+    honest: anything inside the crop is already answered.
+    """
+    H, W = img0.shape[:2]
+    x0, y0, x1, y1 = box
+    cx0, cy0 = max(0, x0 - margin), max(0, y0 - margin)
+    cx1, cy1 = min(W, x1 + margin), min(H, y1 + margin)
+    a = eng._to_tensor(img0[cy0:cy1, cx0:cx1])
+    b = eng._to_tensor(img1[cy0:cy1, cx0:cx1])
+    padder = frame_utils.InputPadder(a.shape, padding_factor=16)
+    a, b = padder.pad(a, b)
+    eng._prep(eng.v3, a.shape[-2], a.shape[-1])
+    torch.cuda.synchronize(); t0 = time.perf_counter()
+    with torch.no_grad(), torch.amp.autocast('cuda', enabled=eng.amp):
+        st = eng.v3.infer_coarse_state(a, b)
+    torch.cuda.synchronize(); t1 = time.perf_counter()
+    with torch.no_grad(), torch.amp.autocast('cuda', enabled=eng.amp):
+        dense = eng.v3.decode_dense_fast(st, stride=stride)
+    torch.cuda.synchronize(); t2 = time.perf_counter()
+    dense = padder.unpad(dense[0]).float().cpu().numpy().transpose(1, 2, 0)
+    return dense, (cx0, cy0, cx1, cy1), (t1 - t0) * 1000, (t2 - t1) * 1000
 
 
 # --------------------------------------------------------------------------- helpers
@@ -141,23 +169,24 @@ def run_policy(pol, eng, img0, img1, boxes, margin, gt, valid, key):
             else:      marginal += d_ms         # decode only, state is cached
 
     elif pol == 'v3_crop':
-        # crop around box 1; if box 2 falls inside that crop it is a free decode,
-        # otherwise it costs a whole new cropped coarse pass
+        # crop around box 1. A second box already covered by that crop is free,
+        # because the crop was densely decoded. One outside costs a whole new pass.
         b = boxes[0]
-        f, c_ms, d_ms, ar = eng.crop_region(img0, img1, b[0], b[1],
-                                            b[2] - b[0], b[3] - b[1],
-                                            margin / max(b[2] - b[0], 1))
-        flows.append(f); first = c_ms + d_ms; area += ar
+        dense, ext, c_ms, d_ms = v3_crop_dense(eng, img0, img1, b, margin)
+        first = c_ms + d_ms
+        area += (ext[2] - ext[0]) * (ext[3] - ext[1])
+        flows.append(dense[b[1] - ext[1]:b[3] - ext[1], b[0] - ext[0]:b[2] - ext[0]])
         for b2 in boxes[1:]:
-            if inside(b2, b, margin):
-                f2, _, d2 = eng.query_region(eng.state, b2[0], b2[1],
-                                             b2[2] - b2[0], b2[3] - b2[1])
-                flows.append(f2); marginal += d2
+            if b2[0] >= ext[0] and b2[1] >= ext[1] and b2[2] <= ext[2] and b2[3] <= ext[3]:
+                flows.append(dense[b2[1] - ext[1]:b2[3] - ext[1],
+                                   b2[0] - ext[0]:b2[2] - ext[0]])
+                marginal += 0.0                 # already inside the decoded crop
             else:
-                f2, c2, d2, ar2 = eng.crop_region(img0, img1, b2[0], b2[1],
-                                                  b2[2] - b2[0], b2[3] - b2[1],
-                                                  margin / max(b2[2] - b2[0], 1))
-                flows.append(f2); marginal += c2 + d2; area += ar2
+                d2, ext2, c2, dd2 = v3_crop_dense(eng, img0, img1, b2, margin)
+                flows.append(d2[b2[1] - ext2[1]:b2[3] - ext2[1],
+                                b2[0] - ext2[0]:b2[2] - ext2[0]])
+                marginal += c2 + dd2
+                area += (ext2[2] - ext2[0]) * (ext2[3] - ext2[1])
 
     epes, fails = [], []
     for f, b in zip(flows, boxes):
