@@ -56,45 +56,46 @@ drifting BatchNorm statistics inside the supposedly frozen stack, worth about
 
 | Mode | Latency | Note |
 |---|---|---|
-| NeuFlow v2, full frame | 19.3 ms | its only mode |
-| v3 sparse, first query on a new pair | 19.16 ms | equivalent to v2 |
-| **v3 sparse, repeat query on a cached pair** | **2.55 ms** | **7.7× cheaper** |
-| v3 dense output, stride 2 | 22.0 ms | not the intended mode |
+| NeuFlow v2, full frame | 33.3 ms | its only mode |
+| v3 sparse, first query on a new pair | 34.1 ms | equivalent to v2 |
+| **v3 sparse, repeat query on a cached pair** | **1.25 ms** | **27× cheaper** |
+| v3 dense output, stride 2 | 37.1 ms | not the intended mode |
 
-The sparse path is a 16.61 ms coarse pass (inherited from v2) plus a 2.55 ms
+The sparse path is a 32.8 ms coarse pass (inherited from v2) plus a 1.25 ms
 decode. Global matching needs whole-image context, so the coarse pass is
 irreducible and dominates a first query.
 
 **State reuse is the decisive property.** v2 keeps nothing between calls, so a
 second question about the same frame costs a full recomputation. v3 answers it
-from cached state. Decode latency is flat from N=800 to N=2,048 (2.553 vs
-2.554 ms), launch-overhead bound, so 2,048 points cost the same as 800.
+from cached state. Decode latency is flat from N=800 to N=2,048 (1.254 vs
+1.285 ms), so 2,048 points cost the same as 800.
 
 ### Flowing only part of the frame
 
-A fast platform cannot afford full-frame flow every frame. Cropping to a region
-of interest keeps full resolution where you are looking and spends nothing
-elsewhere — but what it buys depends entirely on the device.
+A fast platform cannot afford full-frame flow every frame. Three situations it
+meets, and what the model actually computes in each:
 
-![roi crop](docs/figures/roi_crop_devices.png)
+![scenarios](docs/figures/scenarios_illustrated.png)
 
-| Device | Full frame | Crop @32 px | Speedup | EPE penalty |
+Cropping to a region keeps full resolution where you are looking and spends
+nothing elsewhere:
+
+| Region processed | Area | Latency | Speedup | EPE in region |
 |---|---|---|---|---|
-| RTX 4060 (laptop) | 33.3 ms | 7.6 ms | **4.38×** | +0.034 px |
-| Tesla V100 | 17.8 ms | 15.1 ms | 1.18× | +0.034 px |
+| Full frame | 100% | 33.3 ms | 1.0× | 0.657 |
+| Region, no margin | 7.9% | 7.8 ms | 4.3× | 1.089 |
+| **Region + 32 px margin** | **13.8%** | **7.6 ms** | **4.4×** | **0.691** |
+| Region + 64 px margin | 20.1% | 8.1 ms | 4.1× | 0.667 |
+| Region + 128 px margin | 34.2% | 9.9 ms | 3.4× | 0.655 |
 
-Same script, same pairs, same margins. Accuracy cost is identical to three
-decimals; only speed differs. The V100 is bound by kernel launches rather than
-pixels at this size, so removing 86% of the area removes almost no work. The
-weaker device is compute bound and converts the saving nearly in full — which is
-the deployment case. **Quote this per device, never as one figure.** Note also
-that cropping applies to any flow network: it is a platform technique, not a
-property of the decoder.
+Processing 14% of the frame costs 0.034 px and runs 4.4× faster. The margin is
+not optional: with none, error rises 65% and a quarter of large-motion pixels
+fail, because global matching loses the context it needs. Past 32 px nothing
+improves.
 
-**Margin rule.** With no margin, error rises 0.432 px and 24% of large-motion
-pixels fail, because global matching loses the context it needs. A 32 px margin
-on 26.6 px mean motion costs 0.034 px and is the knee. So
-**margin ≈ expected inter-frame motion ≈ speed ÷ frame rate**.
+**Design rule: margin ≈ expected inter-frame motion ≈ speed ÷ frame rate.** Mean
+motion here is 26.6 px and the knee is at 32. Note this applies to any flow
+network — it is a platform technique, not a property of the decoder.
 
 **A new object appearing mid-frame** is the case specific to this architecture:
 
@@ -237,7 +238,7 @@ docs/
   reason. The interface is exact and the mechanism is real, but queries inside one
   8×8 cell see nearly identical evidence, so the extra information returned
   between pixels is small until the decoder gets full-resolution features.
-- **No embedded measurement.** All latency figures are V100 and RTX 4060.
+- **No embedded measurement.** All latency figures are from a laptop RTX 4060.
 - **One evaluation domain.** VKITTI2 only; generalisation to field imagery
   untested.
 - **Statistical resolution.** One seed per configuration, with
@@ -245,7 +246,7 @@ docs/
   0.05 px are not resolved.
 
 For applications consuming a full dense flow field once per frame, **NeuFlow v2 is
-the better choice on every axis**: more accurate, and 14% faster in that mode. v3
+the better choice on every axis**: more accurate, and 11% faster in that mode. v3
 earns its place when the consumer picks its own query points, revisits a frame,
 needs positions between pixels, or wants a confidence value, and when 2.6% of mean
 accuracy is an acceptable price.

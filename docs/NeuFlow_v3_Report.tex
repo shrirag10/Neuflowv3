@@ -57,7 +57,7 @@ points asked for, $O(N)$, not with image area, $O(H \times W)$.
 The decoder costs accuracy: 2.384\px\ against v2's 2.324\px, so 2.6\% worse on
 mean error and 1.5 points worse on 1-pixel accuracy. In exchange it adds three
 things v2 cannot do at all: flow at sub-pixel coordinates, repeat queries on a
-cached frame at 7.7$\times$ lower cost, and a calibrated confidence value per
+cached frame at 27$\times$ lower cost, and a calibrated confidence value per
 query, from a model with 13\% fewer parameters. This report prices that trade.
 
 \section{Why queryable flow}
@@ -93,10 +93,10 @@ comparison below isolates the decoder and nothing else.
 \subsection{The decoder}
 Two phases.
 
-\textbf{Phase 1, once per frame pair, 16.6\ms.} The frozen pipeline produces the
+\textbf{Phase 1, once per frame pair, 32.8\ms.} The frozen pipeline produces the
 coarse flow and feature maps. These are cached.
 
-\textbf{Phase 2, once per query batch, 2.55\ms\ for up to 2{,}048 points.} For a
+\textbf{Phase 2, once per query batch, 1.25\ms\ for up to 2{,}048 points.} For a
 coordinate $(x, y)$ the decoder samples $3\times3$ windows from four sources
 ($1/8$ context, $1/8$ features, $1/16$ features, flow-warped frame-1 features),
 fuses them in a gated MLP, and predicts weights over ten candidates: the nine
@@ -145,7 +145,7 @@ batch-normalisation frozen, only decoder parameters trainable, zero-initialised
 decoder equals bilinear, sparse equals dense, uncertainty present in both decode
 paths, stride-2 fidelity, seed reproducibility.
 
-\textbf{Hardware.} V100, fp16, $384\times1248$ input unless stated.
+\textbf{Hardware.} RTX 4060 laptop, fp16, $384\times1248$ input unless stated.
 
 \section{Results}
 
@@ -197,26 +197,26 @@ responsible for v3 appearing to match v2.}
 \toprule
 Mode & Latency & Note \\
 \midrule
-NeuFlow v2, full frame & 19.3\ms & its only mode \\
-v3 sparse, first query on a new pair & 19.16\ms & level with v2 \\
-\textbf{v3 sparse, repeat query on a cached pair} & \textbf{2.55\ms} & \textbf{7.7$\times$ cheaper} \\
-v3 dense, stride 2 & 22.0\ms & not the intended mode \\
+NeuFlow v2, full frame & 33.3\ms & its only mode \\
+v3 sparse, first query on a new pair & 34.1\ms & level with v2 \\
+\textbf{v3 sparse, repeat query on a cached pair} & \textbf{1.25\ms} & \textbf{27$\times$ cheaper} \\
+v3 dense, stride 2 & 37.1\ms & not the intended mode \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The sparse path is a 16.61\ms\ coarse pass inherited from v2 plus a 2.55\ms\
+The sparse path is a 32.8\ms\ coarse pass inherited from v2 plus a 1.25\ms\
 decode. Global matching needs whole-image context, so the coarse pass cannot be
 skipped. It is 87\% of a first query, which is why a first query costs what a v2
 frame costs.
 
 State reuse is the property that matters. v2 keeps nothing between calls, so
 asking a second question about the same frame means recomputing everything. v3
-answers from cached state in 2.55\ms. For anything that queries a frame more than
+answers from cached state in 1.25\ms. For anything that queries a frame more than
 once (iterative registration, RANSAC refinement, interactive selection,
 multi-hypothesis tracking) that is a structural difference, not a margin.
 
-Decode latency is 2.553\ms\ at $N=800$ and 2.554\ms\ at $N=2{,}048$. The decode is
+Decode latency is 1.254\ms\ at $N=800$ and 1.285\ms\ at $N=2{,}048$. The decode is
 bound by kernel launch overhead, not compute, so 2{,}048 points cost the same as
 800.
 
@@ -255,27 +255,25 @@ region that matters. Three questions follow: what cropping to a region costs,
 when it pays, and what happens when a new object appears in a frame already being
 processed.
 
-\subsection{Cropping: fixed accuracy cost, device-dependent speed}
+\subsection{What a region costs}
 \begin{center}
 \small
 \begin{tabular}{lrrrr}
 \toprule
-Device & Full frame & Crop @32\,px & Speedup & EPE penalty \\
+Region processed & Area & Latency & Speedup & EPE in region \\
 \midrule
-RTX 4060 (laptop) & 33.3\ms & 7.6\ms & \textbf{4.38$\times$} & +0.034\px \\
-Tesla V100 & 17.8\ms & 15.1\ms & 1.18$\times$ & +0.034\px \\
+Full frame & 100\% & 33.3\ms & 1.0$\times$ & 0.657\px \\
+Region, no margin & 7.9\% & 7.8\ms & 4.3$\times$ & 1.089\px \\
+\textbf{Region + 32\,px margin} & \textbf{13.8\%} & \textbf{7.6\ms} & \textbf{4.4$\times$} & \textbf{0.691\px} \\
+Region + 64\,px margin & 20.1\% & 8.1\ms & 4.1$\times$ & 0.667\px \\
+Region + 128\,px margin & 34.2\% & 9.9\ms & 3.4$\times$ & 0.655\px \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-Same script, same 40 pairs, same margins. The accuracy cost is identical to three
-decimals because it is the same computation; only the speed benefit differs. The
-V100 completes a full frame in 17.8\ms\ and is bound by the number of kernel
-launches rather than by pixels, so removing 86\% of the area removes almost no
-work. The weaker device is compute bound and converts the reduction nearly in
-full. This points the right way for deployment: the technique pays off on
-constrained hardware and looks pointless on a datacentre GPU, so the figure has
-to be quoted per device.
+Keeping full resolution and processing 14\% of the frame costs 0.034\px\ and runs
+4.4$\times$ faster. Beyond a 32\px\ margin nothing improves, so the extra area is
+wasted.
 
 Cropping applies to any flow network, v2 included. It is a platform technique,
 not a property of the queryable decoder.
@@ -320,13 +318,13 @@ fixed-resolution design cannot express, from a model 13\% smaller:
 
 \begin{enumerate}
 \item Flow at any continuous coordinate, with sparse output identical to dense.
-\item Repeat access at 2.55\ms\ per query batch against a cached frame, versus a
-      full 19.3\ms\ recomputation.
+\item Repeat access at 1.25\ms\ per query batch against a cached frame, versus a
+      full 33.3\ms\ recomputation.
 \item A calibrated error estimate on every correspondence.
 \end{enumerate}
 
 If an application consumes one full dense flow field per frame and nothing else,
-v2 is the better choice on every axis: more accurate, and 14\% faster in that mode.
+v2 is the better choice on every axis: more accurate, and 11\% faster in that mode.
 I would say so plainly. v3 earns its place when the consumer picks its own query
 points, revisits a frame, needs positions between pixels, or wants a confidence
 value, and when 2.6\% of mean accuracy is an acceptable price for those.
@@ -348,7 +346,7 @@ identical evidence. The interface is exact and the mechanism is real, but the ex
 information it can return between pixels is small until the decoder sees
 full-resolution features.
 
-\textbf{No embedded measurement.} Every latency figure is V100 or RTX 4060. The
+\textbf{No embedded measurement.} Every latency figure is from a laptop RTX 4060. The
 edge claim is a design target, not a result.
 
 \textbf{One evaluation domain.} VKITTI2 is synthetic driving footage. It says
@@ -366,7 +364,7 @@ checkpoint-to-checkpoint variation up to 0.038\px. Differences below about
       interpolative.
 \item \textbf{Re-run with frozen statistics}, removing the confound in
       Section~6 and restoring out-of-domain robustness.
-\item \textbf{Decode-path optimisation.} The decode is launch-bound. CUDA graph
+\item \textbf{Decode-path optimisation.} Decode cost is flat in the query count. CUDA graph
       capture, fusing the three samplers that share coordinates, and
       \texttt{torch.compile} (measured at 9\% on the coarse pass) together project
       a first query below v2's latency.

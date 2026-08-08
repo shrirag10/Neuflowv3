@@ -93,20 +93,20 @@ print(f'{OUT}/precision_bars.png')
 fig, ax = plt.subplots(figsize=(10, 5), dpi=150)
 modes = ['v2\nfull frame', 'v3 dense\n(stride 2)', 'v3 sparse\nfirst query',
          'v3 sparse\nrepeat query']
-vals = [19.3, 22.0, 19.16, 2.55]
+vals = [33.3, 37.1, 34.1, 1.25]
 cols = [WARN, MUTED, MUTED, HL]
 bars = ax.bar(modes, vals, color=cols, width=0.58, zorder=3)
 for b, v in zip(bars, vals):
     ax.text(b.get_x() + b.get_width() / 2, v + 0.4, f'{v:.1f} ms',
             ha='center', fontsize=11, fontweight='bold')
-ax.axhline(19.3, color=WARN, ls='--', lw=1.2, zorder=2)
-ax.set_ylabel('Latency per frame pair, ms  (384x1248, fp16, V100)')
-ax.set_title('Speed: v3 is slower dense, level on a first query, 7.7x cheaper on repeats',
+ax.axhline(33.3, color=WARN, ls='--', lw=1.2, zorder=2)
+ax.set_ylabel('Latency per frame pair, ms  (384x1248, fp16, RTX 4060)')
+ax.set_title('Speed: level with v2 on a first query, 27x cheaper on every one after',
              loc='left', fontsize=12.5, fontweight='bold')
-ax.text(1, 23.4, '14% slower\nthan v2', ha='center', fontsize=9, color=WARN)
-ax.text(3, 4.6, '7.7x cheaper\n(v2 must recompute\nthe whole frame)',
+ax.text(1, 39.4, '11% slower\nthan v2', ha='center', fontsize=9, color=WARN)
+ax.text(3, 5.0, '27x cheaper\n(v2 must recompute\nthe whole frame)',
         ha='center', fontsize=9, color=HL)
-ax.set_ylim(0, 26)
+ax.set_ylim(0, 44)
 plt.tight_layout()
 plt.savefig(f'{OUT}/speed_bars.png', bbox_inches='tight', facecolor='white')
 plt.close()
@@ -165,15 +165,15 @@ print(f'{OUT}/calibration_bars.png')
 # =========================================================== 6. decode cost is flat
 fig, ax = plt.subplots(figsize=(9, 4.6), dpi=150)
 ns = [800, 2048]
-ms = [2.553, 2.554]
+ms = [1.254, 1.285]
 ax.plot(ns, ms, 'o-', color=HL, lw=2, ms=9, zorder=3)
 for n, v in zip(ns, ms):
     ax.annotate(f'{v:.3f} ms', (n, v), textcoords='offset points',
                 xytext=(0, 12), ha='center', fontsize=10.5, fontweight='bold')
-ax.axhline(19.3, color=WARN, ls='--', lw=1.3)
-ax.text(2048, 18.6, 'v2 recomputes the whole frame: 19.3 ms',
+ax.axhline(33.3, color=WARN, ls='--', lw=1.3)
+ax.text(2048, 32.0, 'v2 recomputes the whole frame: 33.3 ms',
         color=WARN, fontsize=9.5, ha='right', va='top')
-ax.set_xlim(400, 2450); ax.set_ylim(0, 22)
+ax.set_xlim(400, 2450); ax.set_ylim(0, 38)
 ax.set_xlabel('Queries per decode call, N')
 ax.set_ylabel('Decode latency, ms')
 ax.set_title('Decode cost is flat in N up to 2,048: launch-overhead bound, not compute bound',

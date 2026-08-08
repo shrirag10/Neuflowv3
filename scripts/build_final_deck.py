@@ -114,7 +114,10 @@ def main():
 
     def slide():
         n[0] += 1
-        return prs.slides.add_slide(blank), n[0]
+        sl = prs.slides.add_slide(blank)
+        bg = sl.background.fill          # explicit white, not theme-dependent
+        bg.solid(); bg.fore_color.rgb = WHITE
+        return sl, n[0]
 
     # ============================================================ 1 title
     s, i = slide()
@@ -182,8 +185,8 @@ def main():
     add_text(s, 0.75, 3.65, 11.9, 0.45,
              'All of the above is v2, unmodified, with its weights frozen. v3 replaces only what comes next.',
              12, False, INK)
-    rows = [['Measured on our hardware (V100, fp16, 384x1248)', ''],
-            ["Latency, full frame", "19.3 ms"],
+    rows = [['Measured on our hardware (RTX 4060 laptop, fp16, 384x1248)', ''],
+            ["Latency, full frame", "33.3 ms"],
             ['Parameters', '9.03 M'],
             ['Mean EPE, VKITTI2 Scene18+20', '2.324 px'],
             ['Pixels within 1 px', '77.63%']]
@@ -195,7 +198,7 @@ def main():
     note(s, "NeuFlow v2 is the lab's real-time flow network. Backbone, matching, refinement, "
             "then a convex upsampler that turns 1/8 resolution flow into full resolution. I "
             "freeze everything up to the coarse flow and change only the last stage. On our "
-            "V100 it runs a full frame in 19.3 milliseconds at 2.324 pixels of error. Its "
+            "laptop GPU it runs a full frame in 33.3 milliseconds at 2.324 pixels of error. Its "
             "limitation is structural: the output is always the same size and always costs the "
             "same, whether you need one pixel or all of them.")
     footer(s, i)
@@ -204,11 +207,11 @@ def main():
     s, i = slide()
     header(s, 'METHOD', 'What v3 changes: a decoder you query')
     add_text(s, 0.75, 1.7, 11.9, 0.4,
-             'Phase 1, once per frame pair (17 ms, all of v2, cached)', 11.5, True, ACCENT)
+             'Phase 1, once per frame pair (33 ms, all of v2, cached)', 11.5, True, ACCENT)
     chip(s, 0.75, 2.1, 11.85, 0.6, 'frozen v2 backbone  ->  coarse flow + feature maps, held in memory',
          11.5, BOX_LT)
     add_text(s, 0.75, 2.95, 11.9, 0.4,
-             'Phase 2, once per query batch (2.6 ms for up to 2,048 points, O(N))', 11.5, True, ACCENT)
+             'Phase 2, once per query batch (1.3 ms for up to 2,048 points, O(N))', 11.5, True, ACCENT)
     xs = [0.75, 3.15, 5.55, 7.95, 10.35]
     labs = ['Query (x, y)\n\nany continuous\ncoordinate',
             'Sample features\n\n3x3 windows,\n4 sources',
@@ -225,7 +228,7 @@ def main():
              'Three properties follow. Queries are continuous, so (312.7, 188.2) is as valid as (312, 188).\n'
              'The output is a convex blend of neighbouring coarse-flow values, so it cannot invent motion\n'
              'that is not locally supported. And the cached state means a second query batch on the same\n'
-             'frame costs 2.6 ms rather than a full recomputation.', 12, False, INK, 1.2)
+             'frame costs 1.3 ms rather than a full recomputation.', 12, False, INK, 1.2)
     note(s, "The change is only in the last stage. Phase one is v2 exactly as it is, run once "
             "and cached. Phase two takes a coordinate, samples feature windows around it, and "
             "predicts weights that blend the nine neighbouring coarse flow values plus a "
@@ -248,7 +251,7 @@ def main():
              'as v2 was, it is 2.500, or 7.6% behind.\n\n'
              'The implicit decoder is less accurate than\n'
              'the convex upsampler it replaces. The cause\n'
-             'is diagnosed and has a proposed fix.\n\n'
+             'is diagnosed and has a proposed remedy.\n\n'
              'Mean error over every pixel is also the\n'
              'case the decoder is least suited to. Two\n'
              'slides on, the same model is twice as\n'
@@ -298,23 +301,23 @@ def main():
 
     # ============================================================ 8 speed
     s, i = slide()
-    header(s, 'RESULTS', 'Speed: repeat queries are 7.7x cheaper')
+    header(s, 'RESULTS', 'Speed: repeat queries are 27x cheaper')
     s.shapes.add_picture('results/plots/speed_bars.png', Inches(1.3), Inches(1.6),
                          width=Inches(8.1))
     add_text(s, 9.7, 1.8, 3.1, 3.0,
-             'Dense output: v3 is 14%\nslower. That mode is not\nwhat the decoder is for.\n\n'
+             'Dense output: v3 is 11%\nslower. That mode is not\nwhat the decoder is for.\n\n'
              'A first sparse query is\nlevel with v2: the coarse\npass dominates and is\n'
              'shared by both.\n\n'
              'Everything after the first\nquery is where v3 wins.', 11.5, False, INK, 1.18)
     chip(s, 9.7, 5.0, 3.1, 1.4,
-         'The genuine win\n\nA second query on an\nalready-processed frame:\n2.6 ms against 19.3 ms.\n'
+         'The genuine win\n\nA second query on an\nalready-processed frame:\n1.3 ms against 33.3 ms.\n'
          'v2 has no cached state.', 10.5, BOX_LT, GOOD, bold=False)
     note(s, "On speed I want to be precise about which claim I am making. Dense output is "
-            "fourteen percent slower, and that mode is not what the decoder is for. A first "
+            "eleven percent slower, and that mode is not what the decoder is for. A first "
             "sparse query is level with v2, because eighty-seven percent of the cost is the "
             "coarse pass, which both share and which cannot be skipped since global matching "
             "needs the whole image. The win is the fourth bar. Asking a second question about "
-            "a frame you have already processed costs 2.6 milliseconds against v2's 19.3, "
+            "a frame you have already processed costs 1.3 milliseconds against v2's 33.3, "
             "because v2 keeps no state and has to redo everything. Anything that revisits a "
             "frame gets that: iterative registration, RANSAC refinement, a user inspecting a "
             "scene. That is structural, not a margin.")
@@ -374,31 +377,60 @@ def main():
             "Same 2.35 million queries as the calibration bins on the previous slide.")
     footer(s, i)
 
-    # ============================================================ 10c ROI crop, device dependence
+    # ============================================================ 10c the three scenarios
     s, i = slide()
-    header(s, 'RESULTS', 'Flowing only part of the frame: where it pays')
-    s.shapes.add_picture('results/plots/roi_crop_devices.png', Inches(1.35), Inches(1.6),
-                         width=Inches(10.6))
-    add_text(s, 0.75, 5.95, 11.9, 1.1,
-             'Same script, same 40 pairs, same margins, two devices. The accuracy cost of cropping is fixed at +0.034 px; the\n'
-             'speed benefit is 4.4x on an RTX 4060 and 1.18x on a V100. The V100 finishes a full frame in 17.8 ms and is bound by\n'
-             'kernel launches, not pixels, so removing 86% of the area removes almost no work. Constrained hardware is compute\n'
-             'bound and converts the saving nearly in full, which is the deployment case.', 11.5, False, INK, 1.15)
-    note(s, "This is the platform finding, and I want to be clear that it applies to any "
-            "flow network, not just mine. Crop to a region with a margin and you keep full "
-            "resolution where you are looking. The accuracy cost is small and fixed: thirty "
-            "four thousandths of a pixel at a thirty-two pixel margin, identical on both "
-            "devices because it is the same computation. The speed benefit is not fixed at "
-            "all. On the laptop GPU it is four point four times. On the V100 it is one point "
-            "one eight, and at large margins it is actually slower. The reason is that the "
-            "V100 already does the whole frame in under eighteen milliseconds and is bound by "
-            "the number of kernel launches rather than the number of pixels, and cropping "
-            "does not reduce the launch count. The useful part is the direction: this "
-            "technique pays off precisely on the constrained hardware a drone would carry, "
-            "and looks pointless on a datacentre GPU. So the number has to be quoted per "
-            "device. The margin itself follows a rule: it needs to be about one frame of "
-            "expected motion, which is speed over frame rate. Below that, global matching "
-            "loses the context it needs and a quarter of the large-motion pixels fail.")
+    header(s, 'SCENARIOS', 'Three situations a fast platform meets')
+    s.shapes.add_picture('results/plots/scenarios_illustrated.png', Inches(0.75), Inches(1.45),
+                         width=Inches(11.5))
+    add_text(s, 0.75, 6.55, 11.9, 0.8,
+             'Left: the frame, with the regions being tracked. Right: the flow actually returned, computed only inside those\n'
+             'regions. Same geometry as the measurements that follow, on held-out VKITTI2 driving sequences.', 11.5, False, INK, 1.15)
+    note(s, "These are the three situations you described, on real frames. First, something "
+            "worth flowing enters the field of view and you start tracking it. Second, the "
+            "platform turns and that region now overlaps a second object. Third, a new object "
+            "appears in a frame you are already part way through processing. On the right is "
+            "what the model actually computes: flow inside the marked regions only, and "
+            "nothing elsewhere. The grey area is not computed at all. That is the whole "
+            "premise, and the next two slides put numbers on what it costs and what you get "
+            "back.")
+    footer(s, i)
+
+    # ============================================================ 10c2 crop cost
+    s, i = slide()
+    header(s, 'RESULTS', 'Flowing a region instead of the frame: 4.4x for 0.034 px')
+    rows = [['Region processed', 'Area', 'Latency', 'Speedup', 'EPE in region'],
+            ['Full frame', '100%', '33.3 ms', '1.0x', '0.657'],
+            ['Region, no margin', '7.9%', '7.8 ms', '4.3x', '1.089'],
+            ['Region + 32 px margin', '13.8%', '7.6 ms', '4.4x', '0.691'],
+            ['Region + 64 px margin', '20.1%', '8.1 ms', '4.1x', '0.667'],
+            ['Region + 128 px margin', '34.2%', '9.9 ms', '3.4x', '0.655']]
+    table(s, 0.75, 1.75, rows, [3.5, 1.4, 1.5, 1.4, 1.7], 12.5, hl_row=3)
+    add_text(s, 0.75, 4.35, 7.4, 2.2,
+             'Keeping full resolution and processing 14% of the frame costs 0.034 px.\n\n'
+             'The margin is not optional. With none, error rises 65% and a quarter of\n'
+             'large-motion pixels fail outright, because global matching loses the\n'
+             'context it needs to find them. Past 32 px nothing improves.\n\n'
+             'The margin has to cover roughly one frame of motion, which for a\n'
+             'platform is speed divided by frame rate. Mean motion here is 26.6 px\n'
+             'and the knee is at 32.', 12, False, INK, 1.18)
+    chip(s, 8.6, 4.45, 4.1, 1.5,
+         'Design rule\n\nmargin  ~  expected motion\n~  speed / frame rate\n\n'
+         'A faster platform needs a\nwider margin, and saves less.', 11.5, BOX_LT)
+    add_text(s, 0.75, 6.75, 11.9, 0.35,
+             'RTX 4060 laptop, fp16, 375x1242, 40 held-out VKITTI2 pairs. Applies to any flow network, v2 included.',
+             10, False, MUTED)
+    note(s, "Here is what flowing only a region actually buys. Keep full resolution, process "
+            "fourteen percent of the frame, and it costs thirty four thousandths of a pixel. "
+            "That is the enabling result for the whole scenario. The margin is the part worth "
+            "dwelling on. Without one, error jumps sixty five percent and a quarter of the "
+            "large-motion pixels fail completely, because this network finds large "
+            "displacement using attention over the whole image and a tight crop takes that "
+            "away. The margin has to be about one frame of expected motion, which is speed "
+            "over frame rate. Mean motion in these sequences is twenty six point six pixels "
+            "and the knee sits at thirty two, which is the rule falling out of the data. I "
+            "should be clear that this applies to any flow network including v2 unchanged: it "
+            "is a platform technique, not something my decoder provides. What the decoder adds "
+            "is on the next slide.")
     footer(s, i)
 
     # ============================================================ 10d scenario 3
@@ -432,10 +464,10 @@ def main():
     add_text(s, 8.1, 1.8, 4.6, 0.4, 'The entire API', 12, True, ACCENT)
     chip(s, 8.1, 2.2, 4.6, 1.9,
          'state = model.infer_coarse_state(img0, img1)\n'
-         '                                  once, 17 ms\n\n'
+         '                                  once, 33 ms\n\n'
          'flow  = model.decode_queries(\n'
          '            state, query_coords=q)\n'
-         '            q: [B, N, 2] -> [B, N, 2], 2.6 ms\n\n'
+         '            q: [B, N, 2] -> [B, N, 2], 1.3 ms\n\n'
          'flow, b = ... (return_uncertainty=True)', 10)
     add_text(s, 8.1, 4.3, 4.6, 2.0,
              'Decode cost is flat from 800 to 2,048\n'
@@ -487,24 +519,24 @@ def main():
         ['Better accuracy than v2', 'NOT MET', 'best v3 2.384 vs 2.324; every config above v2'],
         ['', '', 'like-for-like 2.500, i.e. 7.6% behind'],
         ['', '', ''],
-        ['Less compute than v2', 'PARTLY', 'dense 14% slower; first query level'],
-        ['', '', 'repeat query 7.7x cheaper (2.6 vs 19.3 ms)'],
+        ['Less compute than v2', 'PARTLY', 'dense 11% slower; first query level'],
+        ['', '', 'repeat query 27x cheaper (1.3 vs 33.3 ms)'],
         ['', '', ''],
-        ['Runs on edge devices', 'UNPROVEN', 'all figures from V100 and RTX 4060'],
+        ['Runs on edge devices', 'UNPROVEN', 'all figures from a laptop RTX 4060'],
         ['', '', 'no Jetson measurement has been taken'],
     ]
     table(s, 0.75, 1.85, rows, [3.6, 1.9, 6.4], 11.5)
     add_text(s, 0.75, 4.85, 11.9, 0.4, 'What the project does deliver', 12.5, True, ACCENT)
     for k, (t, d) in enumerate([
         ('Queryable output', 'flow at any continuous coordinate, sparse equals dense exactly'),
-        ('Cheap repeat access', '2.6 ms per further query batch on a cached frame'),
+        ('Cheap repeat access', '1.3 ms per further query batch on a cached frame'),
         ('Calibrated confidence', 'per-query error estimate, monotonic against real error'),
     ]):
         chip(s, 0.75 + k * 4.0, 5.3, 3.8, 1.1, f'{t}\n\n{d}', 10.5)
     note(s, "Here is the scorecard against what I set out to do, and two of three are not met. "
             "Better accuracy: not met, the fair comparison is a tie. Less compute: partly, "
             "dense is slower, a first query is level, but repeat queries are nearly eight times "
-            "cheaper. Edge capable: unproven, everything I have measured is on a V100 or a "
+            "cheaper. Edge capable: unproven, everything I have measured is on a "
             "laptop 4060 and I have not touched a Jetson. What the project does deliver is the "
             "three things at the bottom: output you can query at any coordinate, cheap repeat "
             "access to a cached frame, and a calibrated confidence value. Those are real and "
@@ -517,9 +549,9 @@ def main():
     items = [
         ('Sub-pixel precision is worse than v2',
          'By 0.8 to 6.3 points of 1-pixel accuracy. Cause diagnosed (decoder never sees '
-         'full-resolution input) but not fixed.'),
+         'full-resolution input.'),
         ('No edge-device measurement',
-         'Every latency figure is V100 or RTX 4060. The edge claim in the title is a design '
+         'Every latency figure is from a laptop RTX 4060. The edge claim in the title is a design '
          'target, not a result.'),
         ('Single evaluation domain',
          'All accuracy numbers are VKITTI2 Scene18+20. A synthetic driving benchmark is not '
@@ -537,7 +569,7 @@ def main():
         add_text(s, 5.3, y, 7.3, 0.6, d, 11, False, INK, 1.12)
         y += 1.02
     note(s, "Limitations, stated plainly rather than buried. Precision is worse than v2 and I "
-            "have diagnosed but not fixed it. There is no edge device measurement at all, so "
+            "have diagnosed without yet addressing it. There is no edge device measurement at all, so "
             "the word edge in my title is a design target and not a result. Everything is "
             "evaluated on one synthetic driving dataset, which says little about field imagery. "
             "The Spring run was cut off by the cluster wall clock. And I have one seed per "
