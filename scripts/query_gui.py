@@ -82,11 +82,25 @@ class FlowSession:
                              cv2.cvtColor(cv2.imread(p2), cv2.COLOR_BGR2RGB))
 
     def _decode(self, q):
+        """Decode at coordinates q, which must ALREADY be in padded-frame space.
+
+        Callers passing raw frame coordinates must add self._pad_off() first;
+        dense() and adaptive() already work in padded space and must not.
+        """
         with torch.no_grad(), torch.amp.autocast('cuda', enabled=self.device.type == 'cuda'):
             return self.model.decode_queries(self.state, query_coords=q)
 
+    def _pad_off(self, like):
+        """Offset from raw frame coordinates to the padded frame the coarse
+        state was computed on. InputPadder centres its padding, so a 375x1242
+        VKITTI2 input is shifted by 3 px in x and 4 px in y. Querying without
+        this samples the wrong pixel."""
+        return torch.tensor([self.padder._pad[0], self.padder._pad[2]],
+                            device=like.device, dtype=like.dtype)
+
     def query(self, points_xy):
         q = torch.tensor(points_xy, dtype=torch.float32, device=self.device)[None]
+        q = q + self._pad_off(q)
         t0 = time.perf_counter()
         flow = self._decode(q)
         if self.device.type == 'cuda':
@@ -114,6 +128,7 @@ class FlowSession:
         ys = torch.arange(y0, y0 + h, stride, device=self.device, dtype=torch.float32)
         gy, gx = torch.meshgrid(ys, xs, indexing='ij')
         coords = torch.stack([gx, gy], -1).reshape(1, -1, 2)
+        coords = coords + self._pad_off(coords)
         t0 = time.perf_counter()
         parts = [self._decode(coords[:, i:i + chunk]) for i in range(0, coords.shape[1], chunk)]
         flow = torch.cat(parts, dim=1)

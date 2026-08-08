@@ -118,10 +118,20 @@ class FlowEngine:
         return st
 
     def query_region(self, state, x0, y0, w, h, stride=1):
-        """Decode only inside the box. Exact; costs decode time only."""
+        """Decode only inside the box. Exact; costs decode time only.
+
+        Query coordinates must be in the PADDED frame the coarse state was
+        computed on. InputPadder centres its padding (mode='sintel'), so for a
+        375x1242 VKITTI2 frame that is an offset of 3 px in x and 4 px in y.
+        Passing raw frame coordinates silently samples the wrong place; it cost
+        0.09 px of EPE before this was caught by the full-margin sanity check.
+        """
         dev = self.dev
-        ys = torch.arange(y0, y0 + h, stride, dtype=torch.float32, device=dev)
-        xs = torch.arange(x0, x0 + w, stride, dtype=torch.float32, device=dev)
+        pad = state.get('_padder') if isinstance(state, dict) else None
+        ox = pad._pad[0] if pad is not None else 0
+        oy = pad._pad[2] if pad is not None else 0
+        ys = torch.arange(y0, y0 + h, stride, dtype=torch.float32, device=dev) + oy
+        xs = torch.arange(x0, x0 + w, stride, dtype=torch.float32, device=dev) + ox
         gy, gx = torch.meshgrid(ys, xs, indexing='ij')
         q = torch.stack([gx, gy], -1).reshape(1, -1, 2)
         if dev.type == 'cuda':
