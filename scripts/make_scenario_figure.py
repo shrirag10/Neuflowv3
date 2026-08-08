@@ -44,20 +44,30 @@ def main():
     ap.add_argument('--roi', type=int, default=192)
     ap.add_argument('--pair', type=int, default=430,
                     help='index into the val pair list; pick one with visible motion')
+    ap.add_argument('--dataset', default='vkitti2', choices=['vkitti2', 'tartanair'])
+    ap.add_argument('--out', default=None, help='output filename stem')
     args = ap.parse_args()
 
-    pairs = build_vkitti2_val_pairs(args.dataset_root, ['Scene18', 'Scene20'])
-    p0, p1, _ = pairs[min(args.pair, len(pairs) - 1)]
+    if args.dataset == 'vkitti2':
+        pairs = build_vkitti2_val_pairs(args.dataset_root, ['Scene18', 'Scene20'])
+        p0, p1 = pairs[min(args.pair, len(pairs) - 1)][:2]
+    else:
+        from data_utils.tartanair import build_pairs
+        pairs = build_pairs(args.dataset_root)
+        p0, p1 = pairs[min(args.pair, len(pairs) - 1)][:2]
     i0 = cv2.cvtColor(cv2.imread(p0), cv2.COLOR_BGR2RGB)
     i1 = cv2.cvtColor(cv2.imread(p1), cv2.COLOR_BGR2RGB)
 
     eng = FlowEngine(args.checkpoint, None)
     H, W = i0.shape[:2]
+
     eng.warmup(H, W)
     state = eng.coarse(i0, i1, key='fig')
 
-    fig, axes = plt.subplots(3, 2, figsize=(16, 7.2), dpi=140,
-                             gridspec_kw={'width_ratios': [1.55, 1]})
+    wide = (W / H) > 2.0                      # driving frames are very wide
+    fig, axes = plt.subplots(3, 2,
+                             figsize=(16, 7.2) if wide else (11, 9.6), dpi=140,
+                             gridspec_kw={'width_ratios': [1.55, 1] if wide else [1, 1]})
 
     for r, sc in enumerate(['S1', 'S2', 'S3']):
         boxes = boxes_for(sc, i0, args.roi)
@@ -99,8 +109,10 @@ def main():
                  fontsize=13, x=0.012, ha='left', fontweight='bold', color=INK)
     plt.tight_layout(rect=[0, 0, 1, 0.955])
     os.makedirs(OUT, exist_ok=True)
-    plt.savefig(f'{OUT}/scenarios_illustrated.png', bbox_inches='tight', facecolor='white')
-    print(f'{OUT}/scenarios_illustrated.png')
+    stem = args.out or (f'scenarios_illustrated' if args.dataset == 'vkitti2'
+                        else f'scenarios_{args.dataset}')
+    plt.savefig(f'{OUT}/{stem}.png', bbox_inches='tight', facecolor='white')
+    print(f'{OUT}/{stem}.png')
 
 
 if __name__ == '__main__':

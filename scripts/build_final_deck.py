@@ -457,6 +457,46 @@ def main():
             "is what a platform designer needs.")
     footer(s, i)
 
+    # ============================================================ 10c4 aerial domain
+    s, i = slide()
+    header(s, 'RESULTS', 'On a domain neither model was trained for, v3 edges ahead')
+    if os.path.exists('results/plots/scenarios_tartanair.png'):
+        s.shapes.add_picture('results/plots/scenarios_tartanair.png', Inches(0.7), Inches(1.55),
+                             height=Inches(4.5))
+    rows = [['Crop margin', 'NeuFlow v2', 'NeuFlow v3'],
+            ['full frame', '0.781', '0.777'],
+            ['0 px', '1.205', '1.176'],
+            ['8 px', '0.901', '0.881'],
+            ['16 px', '0.872', '0.865'],
+            ['24 px', '0.879', '0.854'],
+            ['32 px', '0.834', '0.814'],
+            ['64 px', '0.793', '0.778']]
+    table(s, 6.9, 1.75, rows, [2.1, 1.7, 1.7], 11.5)
+    add_text(s, 6.9, 4.65, 5.8, 2.1,
+             'v3 is ahead at all seven settings, by 0.004 to 0.029 px.\n\n'
+             'This is the cleanest comparison available: v2 trained on\n'
+             'FlyingThings, v3 on FlyingChairs, VKITTI2 and Sintel, and\n'
+             'neither has seen aerial imagery. Every other table in this\n'
+             'deck is measured on a domain v3 trained on.\n\n'
+             'Read it as consistent rather than large. Forty pairs, one\n'
+             'seed, and v3 remains slightly worse on large-motion pixels\n'
+             '(7.2% failures against 6.5%). Better on typical pixels,\n'
+             'not on the hard ones.', 11, False, INK, 1.16)
+    note(s, "One more result I did not expect. Everything else in this deck is measured on "
+            "driving sequences, and v3 trained on driving data while v2 did not, which is a "
+            "confound I have flagged throughout. Aerial data is neutral ground: v2 trained on "
+            "FlyingThings, v3 on chairs, driving and Sintel, and neither has seen anything "
+            "like this. On that neutral ground v3 comes out ahead at all seven margin "
+            "settings, by between four thousandths and twenty nine thousandths of a pixel. "
+            "The likely reason is that the decoder saw three datasets where v2 saw one, and "
+            "the convex head is bounded so it cannot invent motion its inputs do not support, "
+            "which should degrade more gracefully out of domain. I want to be careful about "
+            "how much weight this carries: the margins are small, it is forty pairs and one "
+            "seed, and v3 is still slightly worse on the large-motion pixels. What makes it "
+            "worth showing is that it is consistent across seven independent settings, and "
+            "that it is the only unconfounded head to head I have.")
+    footer(s, i)
+
     # ============================================================ 10d scenario 3
     s, i = slide()
     header(s, 'RESULTS', 'A new object appears: 1.7 ms, against 7.3 for a new crop')
