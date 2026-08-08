@@ -5,6 +5,7 @@
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{url}
+\usepackage{balance}          % even out the two columns on the final page
 \usepackage[hidelinks]{hyperref}
 
 \newcommand{\px}{\,px}
@@ -94,7 +95,7 @@ change costs and what it buys. Our contributions are:
 
 \begin{figure*}[t]
 \centering
-\includegraphics[width=\textwidth]{../results/plots/scenarios_illustrated.png}
+\includegraphics[width=\textwidth]{../results/plots/scenarios_illustrated_tight.png}
 \caption{Three situations a fast platform encounters, on held-out driving
 frames. Left: the frame with the region or regions a tracker would nominate.
 Right: the flow the decoder actually returns, computed only inside those
@@ -184,6 +185,11 @@ returned correspondence.
 
 \subsection{Interface}
 
+The interface is two calls, Fig.~\ref{fig:api}: one coarse pass per frame pair,
+then any number of decodes against the cached state. Coordinates are
+continuous, so $(312.7, 188.2)$ is as valid an argument as $(312, 188)$.
+
+\begin{figure}[t]
 \begin{footnotesize}
 \begin{verbatim}
 st = model.infer_coarse_state(img0, img1)
@@ -199,9 +205,10 @@ flow, b = model.decode_queries(st, q,
               return_uncertainty=True)
 \end{verbatim}
 \end{footnotesize}
-
-Coordinates are continuous: $(312.7, 188.2)$ is as valid an argument as
-$(312, 188)$.
+\caption{The complete interface. The coarse state is computed once per frame
+pair; each further decode reuses it.}
+\label{fig:api}
+\end{figure}
 
 \section{Experimental Setup}
 
@@ -372,8 +379,8 @@ belongs to the architecture family rather than to the decoder.}
 \end{figure*}
 
 \begin{table}[t]
-\caption{Required margin at two motion scales, measured with the baseline
-network. Motion, margin and cost in pixels.}
+\caption{Required margin at two motion scales, in pixels, measured with the
+baseline network.}
 \label{tab:margin}
 \centering
 \begin{tabular}{lrrrr}
@@ -429,16 +436,16 @@ simple policy: crop once, or not at all.
 
 \subsection{Cross-Domain Comparison}
 
-\IfFileExists{../results/plots/scenarios_tartanair.png}{%
-\begin{figure*}[t]
+\IfFileExists{../results/plots/scenarios_tartanair_tight.png}{%
+\begin{figure}[t]
 \centering
-\includegraphics[width=\textwidth]{../results/plots/scenarios_tartanair.png}
+\includegraphics[width=\columnwidth]{../results/plots/scenarios_tartanair_tight.png}
 \caption{The same three scenarios on aerial sequences, whose mean inter-frame
-motion is a third of the driving case. The region geometry and the decoder
+motion is a third of the driving case. Region geometry and decoder
 configuration are identical to Fig.~\ref{fig:scenarios}; only the domain
 changes, and no model in this study was trained on it.}
 \label{fig:scenarios_air}
-\end{figure*}%
+\end{figure}%
 \newcommand{\airfig}{ (Fig.~\ref{fig:scenarios_air})}}{\newcommand{\airfig}{}}
 
 On aerial sequences\airfig{} the decoder is ahead of the
@@ -513,6 +520,8 @@ addresses the identified accuracy deficit and would make sub-pixel querying
 substantive; embedded measurement is required before the deployment premise can
 be claimed; and evaluation against ground truth at twice the input resolution
 would test the arbitrary-resolution capability directly.
+
+\balance
 
 \begin{thebibliography}{9}
 

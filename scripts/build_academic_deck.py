@@ -423,9 +423,8 @@ def main():
     # ========================================================== 11 scenarios
     s, i = slide()
     action_title(s, 'A fast platform meets three situations, and\nflows a region rather than a frame')
-    picture(s, f'{PLOTS}/scenarios_illustrated.png', 0.95, 1.48, w=8.1)
-    cite(s, 'Left: the regions a tracker nominates. Right: the flow returned, computed only inside them. Held-out VKITTI 2.',
-         y=5.08)
+    picture(s, f'{PLOTS}/scenarios_illustrated_tight.png', 1.10, 1.44, w=7.80)
+    cite(s, 'Left: the regions a tracker nominates. Right: the flow returned. Held-out VKITTI 2.', y=5.18)
     note(s, "These are the three situations you described, on real frames. First, something worth "
             "flowing enters the field of view and you start tracking it. Second, the platform "
             "turns and that region now overlaps a second object. Third, a new object appears in a "
@@ -485,9 +484,8 @@ def main():
     # ========================================================== 14 aerial scenarios
     s, i = slide()
     action_title(s, 'The same three situations in the aerial\ndomain, where motion is three times smaller')
-    picture(s, f'{PLOTS}/scenarios_tartanair.png', 3.05, 1.48, h=3.42)
-    cite(s, 'TartanAir aerial sequences. Region geometry and decoder configuration identical to the driving figure; '
-            'no model trained on this domain.', y=5.05)
+    picture(s, f'{PLOTS}/scenarios_tartanair_tight.png', 3.20, 1.44, h=3.48)
+    cite(s, 'TartanAir aerial sequences. Same region geometry as the driving figure; no model trained on this domain.', y=5.18)
     note(s, "The same three situations on aerial data, with the region geometry and the decoder "
             "configuration held identical. Only the domain changes. Two things to notice. The "
             "flow inside each region is much closer to uniform than in the driving frames, "

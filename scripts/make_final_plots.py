@@ -203,8 +203,9 @@ ax.annotate('2.2x more accurate\nover 80% of the frame',
             arrowprops=dict(arrowstyle='->', color=INK, lw=1.2))
 ax.set_xlabel('Coverage: percentage of queries accepted')
 ax.set_ylabel('Mean end-point error of the accepted set, px')
-ax.set_xlim(12, 108); ax.set_ylim(0, 2.6)
-ax.legend(frameon=False, loc='upper left')
+ax.set_xlim(12, 108); ax.set_ylim(0, 2.9)
+# the v2 line sits at 2.324, which an upper-left legend runs straight through
+ax.legend(frameon=False, loc='upper left', bbox_to_anchor=(0.02, 1.0))
 ax.set_title('Confidence lets v3 trade coverage for accuracy. v2 has one operating point',
              loc='left', fontsize=12.5, fontweight='bold')
 plt.tight_layout()
