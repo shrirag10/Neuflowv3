@@ -77,10 +77,80 @@ needs.
 The question this project asks: can the last stage be made queryable without
 losing accuracy or speed?
 
+\section{Related work}
+\label{sec:related}
+
+Flow started as a variational problem. Horn and Schunck~\cite{hs81} minimise a
+global energy pairing brightness constancy with a smoothness penalty on the
+field. Lucas and Kanade~\cite{lk81} solve brightness constancy in closed form
+over a window, assuming the flow is constant inside it. Both are local by
+construction, because the data term is a first-order expansion about zero
+displacement and holds only while motion is small relative to image structure.
+Brox et al.~\cite{brox04} add gradient constancy and a warping scheme that solves
+at reduced resolution first, which extends the usable range but still loses a
+small object that moves far enough to vanish from the coarsest level. Large
+displacement of small structures is the failure every learned method since has
+been measured against.
+
+FlowNet~\cite{flownet} replaced the energy with a network trained end to end on
+synthetic data, and showed that an explicit correlation layer between the two
+frames helps more than letting a generic encoder discover matching on its own. It
+was well short of variational accuracy. FlowNet 2.0~\cite{flownet2} closed that
+gap by stacking several such networks with warping between them and a separate
+branch for small displacement, at the cost of a large model.
+
+PWC-Net~\cite{pwcnet} and LiteFlowNet~\cite{liteflownet} put the classical
+pyramid back inside the network. Features are extracted at several scales, flow
+from the coarser level warps the second frame, and a cost volume is built over a
+bounded displacement range around that warp. Bounding the search keeps the volume
+small, which is what made these models compact enough to be practical. The cost
+is the cascade's own weakness: an error made at a coarse level is never revisited.
+RAFT~\cite{raft} removed the cascade by building one all-pairs correlation volume
+at $1/8$ resolution and reading from it repeatedly with a recurrent unit,
+refining a single estimate at fixed resolution. It set the accuracy standard the
+field still works against, and it is slow. GMFlow~\cite{gmflow} treats
+correspondence as global matching instead, with cross-attention over the whole
+feature map producing flow directly and refinement reduced to a correction.
+
+Real-time work asks what of this survives a millisecond budget.
+NeuFlow~\cite{neuflow1} keeps global matching but runs it at $1/16$ behind a
+shallow backbone, then refines with cheap recurrent updates.
+NeuFlow v2~\cite{neuflow2} restructures the backbone and refinement and ends with
+a learned convex upsampler that predicts blending weights over a $3\times3$
+neighbourhood of coarse flow. That upsampler is the stage v3 replaces, and
+everything above it is what v3 inherits frozen.
+
+Implicit representations arrived from elsewhere. NeRF~\cite{nerf} showed a
+coordinate-conditioned MLP can hold a scene and be evaluated anywhere in it, and
+SIREN~\cite{siren} showed the activation function decides how much
+high-frequency detail such a network can hold at all. LIIF~\cite{liif} made the
+idea discrete to continuous for images: a local latent code plus a relative
+coordinate, decoded by one shared MLP, so a single trained model can be sampled
+at any resolution. AnyFlow~\cite{anyflow} brought arbitrary-scale decoding to
+flow and predicts convex weights over candidate displacements, which is where
+v3's ten-candidate head comes from. InfiniDepth~\cite{infinidepth} does the
+continuous version for depth and contributes the gated hierarchical fusion of
+multi-scale features that v3's decoder uses.
+
+Confidence has its own line. Kendall and Gal~\cite{kendall} separate aleatoric
+from epistemic uncertainty and train a heteroscedastic likelihood whose predicted
+scale is supervised only by the error it explains. Ilg et al.~\cite{ilg18}
+applied this to flow directly, comparing multi-hypothesis networks against a
+single predictive distribution and showing the estimate is usable rather than
+decorative. PDC-Net~\cite{pdcnet} predicts a mixture density per correspondence
+and uses it to decide which matches to trust, which is the same use v3 makes of
+its per-query scale.
+
+Every method above emits a dense field at one fixed resolution, chosen when the
+network is built. The queryable ones are queryable in scale, not in coordinate,
+and the implicit decoders that are queryable in coordinate have not been asked to
+run inside a network with a millisecond budget. So whether arbitrary-coordinate
+querying is affordable at speed is open. That is what this report measures.
+
 \section{Method}
 
 \subsection{What is inherited}
-NeuFlow v2 (Zhang, Gupta, Jiang \& Singh, arXiv:2408.10161) runs a shallow CNN
+NeuFlow v2~\cite{neuflow2} runs a shallow CNN
 backbone at $1/8$ and $1/16$ resolution, cross-attention and global matching at
 $1/16$ for an initial flow, recurrent refinement (one iteration at $1/16$, eight
 at $1/8$), then a learned convex upsampler to full resolution.
@@ -148,6 +218,7 @@ paths, stride-2 fidelity, seed reproducibility.
 \textbf{Hardware.} RTX 4060 laptop, fp16, $384\times1248$ input unless stated.
 
 \section{Results}
+\label{sec:results}
 
 \subsection{Accuracy}
 \begin{center}
@@ -171,8 +242,9 @@ is worse still: trained on FlyingChairs alone, mirroring v2's own training, v3
 reaches 2.500\px, which is 7.6\% behind.
 
 So the implicit decoder is less accurate than v2's convex upsampler. The reason is
-identified in Section~6 and is not a training artefact: the decoder's finest input
-sits at $1/8$ resolution while v2's upsampler reads the full-resolution frame.
+identified in Section~\ref{sec:limitations} and is not a training artefact: the
+decoder's finest input sits at $1/8$ resolution while v2's upsampler reads the
+full-resolution frame.
 
 The ordering is monotonic. Each addition of data helps, and the uncertainty head is
 best of the four, though the last three differ by less than 0.02\px\ and I would
@@ -353,6 +425,7 @@ points, revisits a frame, needs positions between pixels, or wants a confidence
 value, and when 2.6\% of mean accuracy is an acceptable price for those.
 
 \section{Limitations}
+\label{sec:limitations}
 
 \textbf{Accuracy.} The decoder is less accurate than the upsampler it replaces, by
 2.6\% on mean error and 1.5 points of 1-pixel accuracy at best, 7.6\% on the
@@ -360,7 +433,8 @@ like-for-like comparison. I know the cause: the decoder's finest input is at $1/
 resolution, so the evidence it sees barely changes inside an $8\times8$ cell, while
 v2's upsampler reads the full-resolution frame directly. Adding a Fourier
 positional encoding of the sub-cell offset changed nothing, which rules out missing
-positional signal and points at missing high-resolution features. Section~7 item~1
+positional signal and points at missing high-resolution features.
+Section~\ref{sec:next} item~1
 is the proposed fix.
 
 The same limitation means sub-pixel querying is currently closer to interpolation
@@ -380,13 +454,14 @@ checkpoint-to-checkpoint variation up to 0.038\px. Differences below about
 0.05\px\ are not resolved.
 
 \section{Next}
+\label{sec:next}
 \begin{enumerate}
 \item \textbf{Full-resolution stem.} Give the decoder a cheap full-resolution
       feature map, estimated 1 to 2\ms. This attacks the precision limitation
       directly and makes sub-pixel querying substantive rather than
       interpolative.
 \item \textbf{Re-run with frozen statistics}, removing the confound in
-      Section~6 and restoring out-of-domain robustness.
+      Section~\ref{sec:results} and restoring out-of-domain robustness.
 \item \textbf{Decode-path optimisation.} Decode cost is flat in the query count. CUDA graph
       capture, fusing the three samplers that share coordinates, and
       \texttt{torch.compile} (measured at 9\% on the coarse pass) together project
@@ -397,6 +472,106 @@ checkpoint-to-checkpoint variation up to 0.038\px. Differences below about
       refutes it.
 \item \textbf{Registration on field imagery}, testing the intended application.
 \end{enumerate}
+
+\begingroup
+\small
+\begin{thebibliography}{99}
+
+\bibitem{hs81}
+B.~K.~P. Horn and B.~G. Schunck, ``Determining optical flow,'' \emph{Artificial
+Intelligence}, vol.~17, no.~1--3, pp.~185--203, 1981.
+
+\bibitem{lk81}
+B.~D. Lucas and T.~Kanade, ``An iterative image registration technique with an
+application to stereo vision,'' in \emph{Proc. Int. Joint Conf. Artificial
+Intelligence (IJCAI)}, 1981, pp.~674--679.
+
+\bibitem{brox04}
+T.~Brox, A.~Bruhn, N.~Papenberg, and J.~Weickert, ``High accuracy optical flow
+estimation based on a theory for warping,'' in \emph{Proc. European Conf.
+Computer Vision (ECCV)}, 2004.
+
+\bibitem{flownet}
+A.~Dosovitskiy, P.~Fischer, E.~Ilg, P.~H\"{a}usser, C.~Hazirbas, V.~Golkov,
+P.~van~der~Smagt, D.~Cremers, and T.~Brox, ``FlowNet: Learning optical flow with
+convolutional networks,'' in \emph{Proc. IEEE Int. Conf. Computer Vision (ICCV)},
+2015.
+
+\bibitem{flownet2}
+E.~Ilg, N.~Mayer, T.~Saikia, M.~Keuper, A.~Dosovitskiy, and T.~Brox, ``FlowNet
+2.0: Evolution of optical flow estimation with deep networks,'' in \emph{Proc.
+IEEE Conf. Computer Vision and Pattern Recognition (CVPR)}, 2017.
+
+\bibitem{pwcnet}
+D.~Sun, X.~Yang, M.-Y. Liu, and J.~Kautz, ``PWC-Net: CNNs for optical flow using
+pyramid, warping, and cost volume,'' in \emph{Proc. IEEE Conf. Computer Vision
+and Pattern Recognition (CVPR)}, 2018.
+
+\bibitem{liteflownet}
+T.-W. Hui, X.~Tang, and C.~C. Loy, ``LiteFlowNet: A lightweight convolutional
+neural network for optical flow estimation,'' in \emph{Proc. IEEE Conf. Computer
+Vision and Pattern Recognition (CVPR)}, 2018.
+
+\bibitem{raft}
+Z.~Teed and J.~Deng, ``RAFT: Recurrent all-pairs field transforms for optical
+flow,'' in \emph{Proc. European Conf. Computer Vision (ECCV)}, 2020.
+
+\bibitem{gmflow}
+H.~Xu, J.~Zhang, J.~Cai, H.~Rezatofighi, and D.~Tao, ``GMFlow: Learning optical
+flow via global matching,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and
+Pattern Recognition (CVPR)}, 2022.
+
+\bibitem{neuflow1}
+Z.~Zhang, H.~Jiang, and H.~Singh, ``NeuFlow: Real-time, high-accuracy optical
+flow estimation on robots using edge devices,'' \emph{arXiv:2403.10425}, 2024.
+
+\bibitem{neuflow2}
+Z.~Zhang, A.~Gupta, H.~Jiang, and H.~Singh, ``NeuFlow v2: High-efficiency optical
+flow estimation on edge devices,'' \emph{arXiv:2408.10161}, 2024.
+
+\bibitem{nerf}
+B.~Mildenhall, P.~P. Srinivasan, M.~Tancik, J.~T. Barron, R.~Ramamoorthi, and
+R.~Ng, ``NeRF: Representing scenes as neural radiance fields for view
+synthesis,'' in \emph{Proc. European Conf. Computer Vision (ECCV)}, 2020.
+
+\bibitem{siren}
+V.~Sitzmann, J.~N.~P. Martel, A.~W. Bergman, D.~B. Lindell, and G.~Wetzstein,
+``Implicit neural representations with periodic activation functions,'' in
+\emph{Advances in Neural Information Processing Systems (NeurIPS)}, 2020.
+
+\bibitem{liif}
+Y.~Chen, S.~Liu, and X.~Wang, ``Learning continuous image representation with
+local implicit image function,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision
+and Pattern Recognition (CVPR)}, 2021.
+
+\bibitem{anyflow}
+H.~Jung, Z.~Hui, L.~Luo, H.~Yang, F.~Liu, S.~Yoo, R.~Ranjan, and D.~Demandolx,
+``AnyFlow: Arbitrary scale optical flow with implicit neural representation,'' in
+\emph{Proc. IEEE/CVF Conf. Computer Vision and Pattern Recognition (CVPR)}, 2023.
+
+\bibitem{infinidepth}
+H.~Yu, H.~Lin, J.~Wang, J.~Li, Y.~Wang, X.~Zhang, Y.~Wang, X.~Zhou, R.~Hu, and
+S.~Peng, ``InfiniDepth: Arbitrary-resolution and fine-grained depth estimation
+with neural implicit fields,'' in \emph{Proc. IEEE/CVF Conf. Computer Vision and
+Pattern Recognition (CVPR)}, 2026. arXiv:2601.03252.
+
+\bibitem{kendall}
+A.~Kendall and Y.~Gal, ``What uncertainties do we need in Bayesian deep learning
+for computer vision?'' in \emph{Advances in Neural Information Processing Systems
+(NeurIPS)}, 2017.
+
+\bibitem{ilg18}
+E.~Ilg, O.~Cicek, S.~Galesso, A.~Klein, O.~Makansi, F.~Hutter, and T.~Brox,
+``Uncertainty estimates and multi-hypotheses networks for optical flow,'' in
+\emph{Proc. European Conf. Computer Vision (ECCV)}, 2018.
+
+\bibitem{pdcnet}
+P.~Truong, M.~Danelljan, L.~Van~Gool, and R.~Timofte, ``Learning accurate dense
+correspondences and when to trust them,'' in \emph{Proc. IEEE/CVF Conf. Computer
+Vision and Pattern Recognition (CVPR)}, 2021.
+
+\end{thebibliography}
+\endgroup
 
 \vspace{6pt}
 {\color{rule}\hrule}
