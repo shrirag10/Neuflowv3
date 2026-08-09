@@ -44,7 +44,7 @@ with an InfiniDepth-style implicit decoder}
 
 \section*{What this is}
 
-Over the past two weeks I've been trying to swap out NeuFlow v2's convex upsampler with an implicit neural decoder, based on the approach in InfiniDepth (CVPR 2025). The idea seemed promising --- InfiniDepth showed that predicting depth at arbitrary continuous coordinates rather than on a fixed grid gives sharper boundaries and better fine-grained accuracy. I wanted to see if the same would apply to optical flow.
+Over the past two weeks I've been trying to swap out NeuFlow v2's convex upsampler with an implicit neural decoder, based on the approach in InfiniDepth (CVPR 2026). The idea seemed promising --- InfiniDepth showed that predicting depth at arbitrary continuous coordinates rather than on a fixed grid gives sharper boundaries and better fine-grained accuracy. I wanted to see if the same would apply to optical flow.
 
 This isn't a complete project. It's a first attempt --- some things worked, some didn't, and the main bottleneck turned out to be training data rather than architecture. Here's what I did and what I found.
 
@@ -178,10 +178,10 @@ Code: \url{https://github.com/shrirag10/Neuflowv3}
 
 \begin{thebibliography}{9}
 \bibitem{neuflowv2}
-Zhao et al., \emph{NeuFlow v2: High-Efficiency Optical Flow Estimation on Edge Devices}, arXiv:2408.10161, 2024.
+Z. Zhang, A. Gupta, H. Jiang, and H. Singh, \emph{NeuFlow v2: High-Efficiency Optical Flow Estimation on Edge Devices}, arXiv:2408.10161, 2024.
 
 \bibitem{yu2026infinidepth}
-Yu et al., \emph{InfiniDepth: Arbitrary-Resolution and Fine-Grained Depth Estimation with Neural Implicit Fields}, arXiv:2601.03252, CVPR 2025.
+H. Yu, H. Lin, J. Wang, J. Li, Y. Wang, X. Zhang, Y. Wang, X. Zhou, R. Hu, and S. Peng, \emph{InfiniDepth: Arbitrary-Resolution and Fine-Grained Depth Estimation with Neural Implicit Fields}, arXiv:2601.03252, CVPR 2026.
 \end{thebibliography}
 
 \end{document}

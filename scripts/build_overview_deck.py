@@ -143,7 +143,7 @@ def main():
         ('', 'Everything in Phase 1 is frozen and verified bit-identical to v2.'),
         ('', 'A convex blend cannot predict motion its inputs do not support.'),
     ], F_COL)
-    cite(s, 'Convex weights follow AnyFlow (2023). Gated fusion follows InfiniDepth (2025).')
+    cite(s, 'Convex weights follow AnyFlow (2023). Gated fusion follows InfiniDepth (2026).')
     note(s, "What actually changed, in one picture. The top chain is v2 exactly as published, up "
             "to its one-eighth resolution coarse flow. All 137 tensors shared with v2 are "
             "verified bit-identical per checkpoint, so any difference you see later is the "

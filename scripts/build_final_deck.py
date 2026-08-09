@@ -126,7 +126,7 @@ def main():
           f'this deck turns on.',
           F_BODY, PP_ALIGN.CENTER)
     cite(s, 'Convex-weight formulation follows AnyFlow (2023). Gated multi-scale fusion follows '
-            'InfiniDepth (2025).')
+            'InfiniDepth (2026).')
     note(s, "A one-slide reminder of what actually changed. Everything in v2 that understands "
             "motion is frozen and verified: all 137 shared tensors bit-identical to v2, checked "
             "per checkpoint, so any difference you see in the results is the decoder and nothing "

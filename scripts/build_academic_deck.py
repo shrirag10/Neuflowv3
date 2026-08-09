@@ -142,7 +142,7 @@ def main():
           'cannot predict motion its inputs do not locally support.',
           F_BODY, PP_ALIGN.CENTER)
     cite(s, 'Convex-weight formulation follows Jung et al. (2023), AnyFlow. Gated fusion follows '
-            'InfiniDepth (2025).')
+            'InfiniDepth (2026).')
     note(s, "The change is confined to the last stage. Phase one is v2 exactly as published, run "
             "once and cached. Phase two takes a coordinate, samples feature windows around it, "
             "and predicts weights that blend the nine neighbouring coarse flow values plus a "
@@ -480,7 +480,9 @@ def main():
         'Jung, H., Hui, Z., Luo, L., Yang, H., Liu, F., Yoo, S., Ranjan, R., & Demandolx, D. (2023). '
         'AnyFlow: Arbitrary Scale Optical Flow with Implicit Neural Representation. CVPR.',
         'Teed, Z., & Deng, J. (2020). RAFT: Recurrent All-Pairs Field Transforms for Optical Flow. ECCV.',
-        'Yu et al. (2025). InfiniDepth: Implicit Neural Upsampling for Monocular Depth Estimation.',
+        'Yu, H., Lin, H., Wang, J., Li, J., Wang, Y., Zhang, X., Wang, Y., Zhou, X., Hu, R., & '
+        'Peng, S. (2026). InfiniDepth: Arbitrary-Resolution and Fine-Grained Depth Estimation '
+        'with Neural Implicit Fields. CVPR. arXiv:2601.03252.',
         'Kendall, A., & Gal, Y. (2017). What Uncertainties Do We Need in Bayesian Deep Learning for '
         'Computer Vision? NeurIPS.',
         'Cabon, Y., Murray, N., & Humenberger, M. (2020). Virtual KITTI 2. arXiv:2001.10773.',

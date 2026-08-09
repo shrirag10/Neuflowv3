@@ -1,4 +1,4 @@
-# Implicit flow decoder adapted from InfiniDepth (Yu et al., 2025).
+# Implicit flow decoder adapted from InfiniDepth (Yu et al., CVPR 2026).
 # InfiniDepth uses ViT features (256/512/1024d) for depth — here we use
 # NeuFlow's CNN backbone features (64/128/128d) for optical flow.
 #
