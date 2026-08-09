@@ -30,6 +30,6 @@ squeue -u "$USER" -o "%.10i %.16j %.8T %.10M %.10l %R"
 cat <<'EOF'
 
 Watch:    squeue -u $USER
-Logs:     tail -5 ~/NeuFlow_v3/nf3-stem*.log
+Logs:     tail -n 5 ~/NeuFlow_v3/nf3-stem*.log
 Evaluate: sbatch hpc/eval_stem.sbatch        (once both are COMPLETED)
 EOF
