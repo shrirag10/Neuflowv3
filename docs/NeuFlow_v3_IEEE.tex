@@ -436,6 +436,23 @@ their ranking under a single seed.
 
 \subsection{Cross-Domain Comparison}
 
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\textwidth]{figures/scenarios_two_domain.png}
+\caption{The same three situations in both evaluation domains, with identical
+region geometry and decoder configuration; only the domain changes. Left,
+driving (Virtual KITTI~2, 26.6\px\ mean inter-frame motion); right, aerial
+(TartanAir, 9.26\px). Teal marks the tracked region and red a region that
+appears later. Everything outside the marked regions is never computed. Neither
+model in this study was trained on aerial imagery.}
+\label{fig:twodomain}
+\end{figure*}
+
+Region-directed inference is not specific to driving footage.
+Fig.~\ref{fig:twodomain} shows the same three situations in both domains under
+identical region geometry, which differ by roughly a factor of three in mean
+inter-frame motion.
+
 On aerial sequences the decoder is ahead of the baseline at all seven margin
 settings tested, by 0.004 to 0.029\px\ (0.777 against 0.781 at full frame). We
 note this is the only unconfounded direct comparison in the study: every driving
