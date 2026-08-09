@@ -32,7 +32,7 @@ $PY train.py \
   --batch_size 16 --num_workers 8 --seed 1234 \
   --lr 2e-4 --onecycle --gamma 0.8 \
   --train_iters_s16 1 --train_iters_s8 8 \
-  --num_steps 100000 --val_freq 5000 --val_dataset none \
+  --num_steps {steps} --val_freq 5000 --val_dataset none \
   --max_flow 400 \
   --resume neuflow_mixed.pth \
   --checkpoint_dir "$CKPT_DIR"

@@ -7,49 +7,64 @@
 #SBATCH --time=01:00:00
 #SBATCH --output=%x_%j.log
 
-# Evaluate the stem runs on the cluster, where the dataset already lives, rather
-# than pulling 31 MB checkpoints back to a laptop that is 97% full.
+# Evaluate the stem runs against the baseline AT THE SAME STEP.
 #
-#     sbatch hpc/eval_stem.sbatch
-#     tail -40 nf3-stem-eval_*.log
+#     sbatch hpc/eval_stem.sbatch          # step 80000, the default
+#     STEP=100000 sbatch hpc/eval_stem.sbatch
+#
+# The stem runs hit the 8 h wall at ~84k steps and last saved at 80k. Comparing
+# an 80k stem against a 100k baseline would move two variables at once, and the
+# whole point of generating these runs from one template is that they differ in
+# exactly one. The baseline kept every 5k checkpoint, so 80k against 80k is
+# available and is the honest comparison.
+#
+# Caveat that belongs on any slide using these numbers: OneCycle had not finished
+# annealing at 80k for any of the three, so all are slightly under-trained. That
+# affects them equally, which is why the comparison still holds.
 #
 # Runs as a job rather than on the login node, which kills heavy processes.
-#
-# --stem must match training. It grows the decoder input from 260 to 388, so a
-# stem checkpoint will not load into a non-stem model, and the failure is loud.
 
 set -eu
 export PYTHONNOUSERSITE=1
 PY=$HOME/.conda/envs/neuflow/bin/python3
 cd $HOME/NeuFlow_v3
 
+STEP=${STEP:-080000}
 DATA=/scratch/$USER/neuflow_datasets/vkitti2
 CKPTS=/scratch/$USER/neuflow_ckpts
 
-for run in v3_FlyingChairs_VKITTI2_Sintel_stem v3_FlyingChairs_VKITTI2_Sintel_stem_pe; do
-    CKPT=$CKPTS/$run/step_100000.pth
-    if [ ! -f "$CKPT" ]; then
-        echo "== $run: no step_100000.pth yet, skipping"
-        continue
+echo "Evaluating at step $STEP, VKITTI 2 Scene18+20, fast_dense stride 2"
+echo
+
+#      run directory                              extra eval flags
+run_eval () {
+    local run="$1" extra="$2"
+    local ckpt="$CKPTS/$run/step_$STEP.pth"
+    if [ ! -f "$ckpt" ]; then
+        echo "== $run: no step_$STEP.pth, skipping"
+        return
     fi
-    EXTRA=''
-    [ "$run" = v3_FlyingChairs_VKITTI2_Sintel_stem_pe ] && EXTRA='--pe'
+    echo "================================================== $run  $extra"
+    $PY scripts/eval_vkitti2.py --head convex $extra \
+        --checkpoint "$ckpt" --dataset_root "$DATA" \
+        --fast_dense --stride 2 2>&1 | grep -E 'Mean EPE|1px acc|3px acc'
     echo
-    echo "================================================== $run"
-    $PY scripts/eval_vkitti2.py \
-        --head convex --stem $EXTRA \
-        --checkpoint "$CKPT" \
-        --dataset_root "$DATA" \
-        --fast_dense --stride 2 2>&1 | grep -E 'Val pairs|Mean EPE|1px|3px'
-done
+}
 
-cat <<'EOF'
+run_eval v3_FlyingChairs_VKITTI2_Sintel          ''
+run_eval v3_FlyingChairs_VKITTI2_Sintel_stem     '--stem'
+run_eval v3_FlyingChairs_VKITTI2_Sintel_stem_pe  '--stem --pe'
 
-=================================================== reference
-same training data, no stem   EPE 2.392   1px 75.83%   3px 88.98%
-NeuFlow v2                    EPE 2.324   1px 77.63%   3px 89.80%
+cat <<EOF
+=================================================== how to read this
+All three above are at step $STEP, same data, same seed, same schedule. The only
+difference is the decoder input, so any gap is the stem.
 
-1px is the metric the stem targets: the gap lives in sub-pixel precision, not in
-large errors. Mean EPE can stay flat while 1px moves, and that is still the
-predicted outcome.
+For context, fully trained at 100k:
+  no stem, 100k    EPE 2.392   1px 75.83%   3px 88.98%
+  NeuFlow v2       EPE 2.324   1px 77.63%   3px 89.80%
+
+Watch 1px, not mean EPE. The deficit the stem targets is sub-pixel precision, so
+1px can move while mean EPE stays flat and that still confirms the diagnosis.
+Differences below about 0.05 px EPE are not resolved by a single seed.
 EOF

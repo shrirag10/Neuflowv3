@@ -33,11 +33,18 @@ RUNS = [
      'once the stem is present, so the pair is tested together)'),
 ]
 
+# The stem runs average 2.94 step/s against the baseline's 4.64, so 100k steps
+# need about 9.5 h against an 8 h wall and both were cut off at ~84k with the
+# OneCycle schedule still annealing. STEPS lets a rerun set a target that fits,
+# so the schedule completes rather than being truncated.
+STEPS = 100000
+
 if __name__ == '__main__':
     d = os.path.dirname(__file__)
     for name, job, stage, extra, vary in RUNS:
         fn = os.path.join(d, f'{name}.sbatch')
         open(fn, 'w').write(TEMPLATE.format(name=name, job=job, stage=stage,
-                                            extra=extra, vary=vary))
+                                            extra=extra, vary=vary,
+                                            steps=STEPS))
         os.chmod(fn, 0o755)
         print('wrote', fn)
