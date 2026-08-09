@@ -29,6 +29,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _maybe_cast(x, like):
+    """Autocast leaves the window projections and the fusion at different dtypes
+    depending on which ops ran; concatenating then fails. Align to the fused
+    tensor, which is what the MLP consumes."""
+    return x.to(like.dtype)
+
+
 class MLP(nn.Module):
 
     def __init__(self, in_dim, out_dim, hidden_list):
@@ -58,6 +65,8 @@ class ImplicitFlowDecoder(nn.Module):
         use_pe: bool = False,     # Fourier-encode the sub-cell offset (AnyFlow psi(x_q - v*))
         pe_freqs: int = 4,
         predict_uncertainty: bool = False,  # option G: extra channel = per-query error scale b
+        use_stem: bool = False,   # full-resolution stem, see below
+        stem_dim: int = 128,
     ):
         super().__init__()
 
@@ -76,6 +85,25 @@ class ImplicitFlowDecoder(nn.Module):
         self.use_pe       = use_pe
         self.pe_freqs     = pe_freqs
         self.predict_uncertainty = predict_uncertainty
+        self.use_stem     = use_stem
+        self.stem_dim     = stem_dim if use_stem else 0
+
+        # --- Full-resolution stem ---
+        # Every other input to this decoder is at 1/8 or 1/16, so two queries
+        # inside the same 8x8 cell see nearly identical evidence and the decoder
+        # cannot tell them apart. That single fact explains the 1px accuracy gap,
+        # the Fourier-PE null and the weak sub-pixel behaviour.
+        #
+        # This mirrors what v2's upsampler already does: sweep an 8x8 kernel with
+        # stride 8 over the full-resolution image, so each cell's channel vector
+        # encodes that entire 8x8 patch of raw pixels. The map is still 1/8, but
+        # its channels now carry full-resolution structure for the MLP to condition
+        # on. Pairs with use_pe: the stem supplies what the patch contains, the PE
+        # supplies where inside it the query sits. Either alone is not enough,
+        # which is why the PE measured null on its own.
+        if use_stem:
+            self.stem = nn.Conv2d(3, stem_dim, kernel_size=8, stride=8,
+                                  padding=0, bias=False)
 
         # --- Local-window projectors: k*k*C → C ---
         # Do NOT call center-init here; NeuFlow.__init__ runs Xavier over all
@@ -86,6 +114,8 @@ class ImplicitFlowDecoder(nn.Module):
         self.win_proj_s8    = nn.Linear(k2 * feat_dim_s8,  feat_dim_s8)    # 1152→128
         self.win_proj_s16   = nn.Linear(k2 * feat_dim_s8,  feat_dim_s8)    # 1152→128
         self.win_proj_feat1 = nn.Linear(k2 * feat_dim_s8,  feat_dim_s8)    # 1152→128
+        if use_stem:
+            self.win_proj_stem = nn.Linear(k2 * stem_dim, stem_dim)        # 1152→128
 
         # --- Fusion: ctx_s8 -> feat_s8 -> feat_s16 (shallow to deep) ---
         self.proj_ctx = nn.Linear(feat_dim_ctx, hidden_dim)
@@ -106,7 +136,8 @@ class ImplicitFlowDecoder(nn.Module):
 
         # PE adds sin/cos at pe_freqs frequencies for the (x,y) sub-cell offset
         pe_dim = 2 * 2 * pe_freqs if use_pe else 0
-        mlp_in_dim = hidden_dim + feat_dim_s8 + 2 + 2 + pe_dim   # 260 (+16 with PE)
+        mlp_in_dim = hidden_dim + feat_dim_s8 + 2 + 2 + pe_dim + self.stem_dim
+        # 260, +16 with PE, +128 with the stem
 
         if head_mode == 'convex':
             # AnyFlow-style: predict softmax weights over the k*k coarse-flow
@@ -143,12 +174,15 @@ class ImplicitFlowDecoder(nn.Module):
         k2 = self.window_size ** 2
         center = k2 // 2  # index 4 for 3×3
 
-        for proj, C in [
+        projs = [
             (self.win_proj_ctx,   self.feat_dim_ctx),
             (self.win_proj_s8,    self.feat_dim_s8),
             (self.win_proj_s16,   self.feat_dim_s8),
             (self.win_proj_feat1, self.feat_dim_s8),
-        ]:
+        ]
+        if self.use_stem:
+            projs.append((self.win_proj_stem, self.stem_dim))
+        for proj, C in projs:
             with torch.no_grad():
                 proj.weight.zero_()
                 # Only the center cell's block contributes — equivalent to single-point sampling
@@ -262,7 +296,8 @@ class ImplicitFlowDecoder(nn.Module):
         return F.conv2d(x, w, bias=proj.bias.to(feat_map.dtype))
 
     def forward_dense_fast(self, feat_s8, feat1_s8, feat_s16, ctx_s8, coarse_flow,
-                           target_h=None, target_w=None, fusion_on_grid=True):
+                           target_h=None, target_w=None, fusion_on_grid=True,
+                           img=None):
         """Dense decoding with per-image precomputation.
 
         fusion_on_grid=False: numerically equivalent to forward() dense mode
@@ -324,6 +359,12 @@ class ImplicitFlowDecoder(nn.Module):
         coarse_norm[..., 1] /= H_full
 
         mlp_parts = [fused, f1w, cn, coarse_norm]
+        if self.use_stem:
+            if img is None:
+                raise RuntimeError('use_stem=True needs the full-resolution image')
+            mstem = self._win_proj_as_conv(self.stem(img.to(self.stem.weight.dtype)),
+                                           self.win_proj_stem)
+            mlp_parts.append(_maybe_cast(self._sample_features(mstem, cn), fused))
         if self.use_pe:
             p = (coords.float() + 0.5) / 8.0 - 0.5
             c = p - p.floor() - 0.5
@@ -414,6 +455,14 @@ class ImplicitFlowDecoder(nn.Module):
         coarse_norm[..., 1] /= H_full
 
         mlp_parts = [fused, f1_warped, coords_norm, coarse_norm]
+
+        if self.use_stem:
+            # img is the full-resolution normalised frame 0. The conv reduces it
+            # to the s8 grid, so the same window sampler applies.
+            stem_map = self.stem(img.to(self.stem.weight.dtype))
+            mlp_parts.append(_maybe_cast(
+                self._sample_local_window(stem_map, coords_norm, ws,
+                                          self.win_proj_stem), fused))
 
         if self.use_pe:
             # Sub-cell offset: where the query sits inside its s8 coarse cell,

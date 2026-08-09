@@ -18,7 +18,7 @@ class NeuFlow(torch.nn.Module,
               PyTorchModelHubMixin,
               repo_url="https://github.com/neufieldrobotics/NeuFlow_v2", license="apache-2.0", pipeline_tag="image-to-image"):
     def __init__(self, use_implicit: bool = True, head_mode: str = 'convex', use_pe: bool = False,
-                 predict_uncertainty: bool = False):
+                 predict_uncertainty: bool = False, use_stem: bool = False):
         super(NeuFlow, self).__init__()
 
         self.use_implicit = use_implicit
@@ -61,6 +61,7 @@ class NeuFlow(torch.nn.Module,
                 head_mode=head_mode,
                 use_pe=use_pe,
                 predict_uncertainty=predict_uncertainty,
+                use_stem=use_stem,
             )
         else:
             # ---- Legacy convex-upsampler path ----
@@ -224,6 +225,7 @@ class NeuFlow(torch.nn.Module,
             coarse_flow=state['coarse_flow_s8'],
             target_h=th // stride, target_w=tw // stride,
             fusion_on_grid=fusion_on_grid,
+            img=state['img0'],
         )
         if stride > 1:
             flow = F.interpolate(flow, size=(th, tw), mode='bilinear', align_corners=False)

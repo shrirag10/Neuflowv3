@@ -45,12 +45,12 @@ def build_vkitti2_val_pairs(root, val_scenes=None):
 @torch.no_grad()
 def evaluate(checkpoint, dataset_root, val_scenes, padding_factor=16, implicit=True, crop=None,
              head='convex', pe=False, iters_s16=1, iters_s8=8, fast_dense=False, stride=1,
-             uncertainty=False):
+             uncertainty=False, stem=False):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     amp_enabled = device.type == 'cuda'
 
     model = NeuFlow(use_implicit=implicit, head_mode=head, use_pe=pe,
-                    predict_uncertainty=uncertainty).to(device)
+                    predict_uncertainty=uncertainty, use_stem=stem).to(device)
     state_dict = my_load_weights(checkpoint)
     load_with_new_keys(
         model, state_dict,
@@ -163,9 +163,12 @@ if __name__ == '__main__':
     parser.add_argument('--stride', type=int, default=1, help='fast_dense decode stride')
     parser.add_argument('--uncertainty', action='store_true',
                         help='Checkpoint has the uncertainty head (extra output channel); must match training')
+    parser.add_argument('--stem', action='store_true',
+                        help='Checkpoint has the full-resolution stem; must match training')
     args = parser.parse_args()
 
     evaluate(args.checkpoint, args.dataset_root, args.val_scenes, args.padding_factor,
              implicit=not args.no_implicit, crop=args.crop, head=args.head, pe=args.pe,
              iters_s16=args.iters_s16, iters_s8=args.iters_s8,
-             fast_dense=args.fast_dense, stride=args.stride, uncertainty=args.uncertainty)
+             fast_dense=args.fast_dense, stride=args.stride, uncertainty=args.uncertainty,
+             stem=args.stem)

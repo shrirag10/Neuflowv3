@@ -75,6 +75,10 @@ def get_args_parser():
                         help='Fourier positional encoding of the sub-cell query offset')
     parser.add_argument('--uncertainty', action='store_true',
                         help='Option G: head predicts per-query error scale b; final-iteration loss |err|/b + log b')
+    parser.add_argument('--stem', action='store_true',
+                        help='Full-resolution stem feeding the decoder (the remedy for the '
+                             '1/8-resolution evidence limit). Changes the decoder input dim, '
+                             'so stem and non-stem checkpoints are not interchangeable.')
     parser.add_argument('--sparse_loss', action='store_true',
                         help='Use sparse-point loss (InfiniDepth-style)')
     parser.add_argument('--num_sparse_points', default=8192, type=int,
@@ -125,7 +129,7 @@ def main(args):
 
     # model
     model = NeuFlow(use_implicit=args.implicit, head_mode=args.head, use_pe=args.pe,
-                    predict_uncertainty=args.uncertainty).to(device)
+                    predict_uncertainty=args.uncertainty, use_stem=args.stem).to(device)
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(
@@ -172,7 +176,7 @@ def main(args):
             load_with_new_keys(
                 model_without_ddp,
                 state_dict,
-                missing_ok_substrings=['implicit_decoder_module', 'win_proj_'],
+                missing_ok_substrings=['implicit_decoder_module', 'win_proj_', 'stem'],
                 unexpected_ok_substrings=['conv_s8', 'upsample_s8'],
             )
 

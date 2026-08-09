@@ -24,6 +24,13 @@ RUNS = [
     ('v3_FlyingChairs_VKITTI2_Sintel_uncertainty', 'nf3-unc',
      'FlyingChairs+VKITTI2+Sintel', ' --uncertainty',
      'uncertainty head ON (same data as v3_FlyingChairs_VKITTI2_Sintel)'),
+    ('v3_FlyingChairs_VKITTI2_Sintel_stem', 'nf3-stem',
+     'FlyingChairs+VKITTI2+Sintel', ' --stem',
+     'full-resolution stem ON (same data as v3_FlyingChairs_VKITTI2_Sintel)'),
+    ('v3_FlyingChairs_VKITTI2_Sintel_stem_pe', 'nf3-stem-pe',
+     'FlyingChairs+VKITTI2+Sintel', ' --stem --pe',
+     'full-resolution stem + Fourier PE (the PE has content to index into only '
+     'once the stem is present, so the pair is tested together)'),
 ]
 
 if __name__ == '__main__':
