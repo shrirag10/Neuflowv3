@@ -1,5 +1,13 @@
 # NeuFlow v3 — Base Parameters (paper-derived)
 
+> **Historical record.** This file traces how the parameters were chosen during
+> July 2026. Several values below were later superseded: the final runs use
+> batch 16 on an H200 (not batch 4), 100,000 steps (not 15K/30K), and the
+> VKITTI2 pair counts here predate the Scene18/20 leak fix. Any result in this
+> file measured before the BatchNorm freeze is invalid. For the parameters and
+> figures actually presented, see `hpc/_template.sbatch` and
+> `docs/NeuFlow_v3_Report.tex`.
+
 Set 2026-07-08 after reading the three source papers. Every choice cites its origin.
 Baseline script: `train_baseline_v1.sh`. Eval: `scripts/eval_vkitti2.py` (per-pixel metrics).
 
