@@ -38,9 +38,10 @@ factor of $27$; and calibrated confidence, a per-query error scale the baseline
 cannot express at all. The decoder is 745{,}226 parameters, 38\% of the stage it
 replaces, and the complete model is 13.3\% smaller than the baseline. On held-out
 driving sequences it is 2.6\% less accurate on mean end-point error. The
-confidence signal is the more consequential capability: permitting the model to
-abstain on its least confident 20\% of queries yields 1.06\px\ mean error against
-the baseline's 2.32\px\ over the remaining 80\% of the frame. We further
+confidence signal is the more consequential capability: ranking queries by
+predicted error lets the model abstain on its least confident 20\%, reducing mean
+error over the remaining 80\% of the frame to 1.06\px, a selection the baseline
+cannot make at any threshold since it emits flow alone. We further
 characterise region-directed inference for fast-moving platforms, showing that
 the context margin a cropped region requires is set by inter-frame displacement
 rather than image size, a relation we verify at two motion scales differing by a

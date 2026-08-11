@@ -40,7 +40,7 @@
 
 \begin{center}
 {\LARGE\bfseries NeuFlow v3}\\[4pt]
-{\large Queryable optical flow with calibrated uncertainty}\\[10pt]
+{\large Queried optical flow with calibrated uncertainty\\for region-directed perception}\\[10pt]
 {\normalsize Shriman Raghav Srinivasan}\\[2pt]
 {\footnotesize\color{muted} MS Robotics, Northeastern University \quad$\cdot$\quad Field Robotics Lab \quad$\cdot$\quad August 2026}
 \end{center}
@@ -48,17 +48,52 @@
 {\color{rule}\hrule}
 \vspace{8pt}
 
-\section*{Summary}
-NeuFlow v2 always computes flow for every pixel at one fixed resolution. v3
-replaces only its final upsampling stage with an implicit decoder, so the model
-answers flow queries at any continuous coordinate. Cost scales with the number of
-points asked for, $O(N)$, not with image area, $O(H \times W)$.
+\section*{Abstract}
+Real-time optical flow networks emit a displacement for every pixel, at one fixed
+resolution, on every call, and retain no state between calls. Many consumers of
+flow, including registration, sparse tracking, visual odometry and survey
+mosaicking, need a few hundred correspondences at locations they select, and a
+platform working to a millisecond budget can afford neither the full field nor
+the recomputation. This report presents NeuFlow v3, which retains the NeuFlow v2
+pipeline through its coarse flow stage and replaces only the final learned convex
+upsampler with an implicit decoder evaluated at arbitrary continuous coordinates.
+The front end is frozen and verified bit-identical across all 137 shared tensors
+after every run, so every measured difference is attributable to the decoder
+alone. The decoder samples four feature sources in a $3\times3$ window around a
+query, fuses them through a gated network, and emits a convex combination of ten
+candidate displacements drawn from the coarse field, bounding the prediction
+inside the locally supported motion range, together with a per-query error scale
+trained under a Laplace likelihood.
 
-The decoder costs accuracy: 2.384\px\ against v2's 2.324\px, so 2.6\% worse on
-mean error and 1.5 points worse on 1-pixel accuracy. In exchange it adds three
-things v2 cannot do at all: flow at sub-pixel coordinates, repeat queries on a
-cached frame at 27$\times$ lower cost, and a calibrated confidence value per
-query, from a model with 13\% fewer parameters. This report prices that trade.
+The resulting factorisation into a cached coarse pass and a queried decode changes
+the cost of $N$ queries about one frame pair from $33.3N$\ms\ to $32.8 + 1.25N$\ms.
+A repeat query on a cached pair costs 1.25\ms\ against 33.3\ms, and an object
+appearing in a frame already being processed is answered from cache in 1.68\ms\ at
+2.10\px, against 7.29\ms\ and 3.60\px\ for a fresh crop through the baseline, which
+is both slower and less accurate because cropping discards the context global
+matching requires. Sparse output reproduces the dense field to 0.00057\px, so
+sparse and dense decoding are one function evaluated on two point sets rather than
+two operating modes. Across 2{,}348{,}000 held-out queries the predicted error
+scale orders measured error monotonically over five equal-count bins, from
+0.48\px\ to 7.10\px; abstaining on the least confident fifth reduces mean error
+over the accepted 80\% to 1.06\px, a selection the baseline cannot make at any
+threshold because it emits flow alone.
+
+The cost is quantified rather than avoided. Mean end-point error rises from
+2.324\px\ to 2.384\px, 2.6\%, from a model 13\% smaller, and the like-for-like
+single-dataset comparison is 2.500\px. The penalty is concentrated in sub-pixel
+precision, 1.5 points of 1-pixel accuracy, rather than in large errors, and dense
+reconstruction is 11\% slower, so the baseline remains the correct choice for
+consumers that take one dense field per frame. Because every driving result is
+measured on a domain v3 trained on and the baseline did not, an unconfounded
+cross-domain comparison is reported on aerial imagery neither model trained for,
+where the queried decoder records lower error at all seven crop settings tested,
+by consistent but small margins. Finally, region-directed inference for
+fast-moving platforms is characterised: processing 14\% of the frame costs
+0.034\px, and the context margin a cropped region requires is set by inter-frame
+displacement rather than by image size, a relation that collapses across a
+threefold difference in motion scale and can therefore be sized from platform
+speed and frame rate before any flow is computed.
 
 \section{Why queryable flow}
 Flow networks produce a dense map. Many consumers do not want one.
@@ -220,7 +255,7 @@ paths, stride-2 fidelity, seed reproducibility.
 \section{Results}
 \label{sec:results}
 
-\subsection{Accuracy}
+\subsection{Accuracy}\label{sec:accuracy}
 \begin{center}
 \small
 \begin{tabular}{llrrrr}
@@ -250,17 +285,12 @@ The ordering is monotonic. Each addition of data helps, and the uncertainty head
 best of the four, though the last three differ by less than 0.02\px\ and I would
 not read much into their ranking from a single seed.
 
-These numbers replace an earlier set that showed v3 at 2.10 to 2.29\px. Those runs
-had drifting normalisation statistics in the supposedly frozen stack, worth about
-0.25\px. With the statistics genuinely frozen the advantage disappears.
-
-\begin{figure}[h]
-\centering
-\includegraphics[width=0.86\textwidth]{figures/freeze_effect.png}
-\caption{The same four configurations trained with drifting versus verifiably
-frozen normalisation statistics. The drift was worth roughly 0.25\,px and was
-responsible for v3 appearing to match v2.}
-\end{figure}
+One qualification applies to this table and to every driving result that follows.
+v3's training mix includes other VKITTI2 scenes while v2's does not, so the
+comparison is biased in v3's favour on this domain. The accuracy gap above is
+therefore a lower bound on the true cost of the decoder, and the only
+unconfounded comparison in this report is the aerial one in Section~\ref{sec:aerial}, on a
+domain neither model trained for.
 
 \subsection{Compute}
 \begin{center}
@@ -279,7 +309,7 @@ v3 dense, stride 2 & 37.1\ms & not the intended mode \\
 
 The sparse path is a 32.8\ms\ coarse pass inherited from v2 plus a 1.25\ms\
 decode. Global matching needs whole-image context, so the coarse pass cannot be
-skipped. It is 87\% of a first query, which is why a first query costs what a v2
+skipped. It is 96\% of a first query, which is why a first query costs what a v2
 frame costs.
 
 State reuse is the property that matters. v2 keeps nothing between calls, so
@@ -310,9 +340,79 @@ above 1.22 & 7.100\px \\
 
 Measured over 2{,}348{,}000 queries. Actual error rises monotonically across all
 five bins, a 15$\times$ span, Pearson $r = 0.318$. The correlation is not strong
-but the signal is clearly informative and directly usable: weight correspondences
+but the ordering is reliable and directly usable: weight correspondences
 in RANSAC, drop unreliable ones, or send more queries where the model is unsure.
+The ordering can be trusted; the per-query magnitude cannot, and I do not claim it.
 v2 outputs flow only and has nothing comparable.
+
+\subsection{Abstention: what the ordering is worth}
+Because the model can rank its own answers it can decline to answer some of them.
+Sorting the same 2{,}348{,}000 queries by predicted confidence and answering only
+the most confident fraction gives an accuracy-coverage curve.
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+Coverage & EPE of the accepted set & v2 \\
+\midrule
+20\% & \textbf{0.480\px} & no selection possible \\
+80\% & \textbf{1.058\px} & no selection possible \\
+100\% & 2.266\px & 2.324\px \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Discarding the least confident fifth reduces error over the remaining 80\% of the
+frame to 1.058\px. The claim I make without qualification is the internal one:
+across 2.35\,M of my own queries, error falls monotonically as predicted
+confidence rises, and the spread from the most to the least confident group is
+more than fourfold. That is measured on my own outputs and depends on no
+comparison.
+
+The comparison against v2 is the weaker framing and I would rather state its
+weakness than have it extracted. The accepted 80\% is the easier 80\%, and v2
+would also score better on that subset than on the full frame. What survives
+regardless is the capability: there is no threshold that can be set on a model
+emitting flow alone to produce this curve at all. v2 has one operating point,
+structurally. If a query is rejected the consumer asks elsewhere or falls back on
+its previous estimate, and asking again costs about a millisecond.
+
+\subsection{Aerial domain: the one unconfounded comparison}\label{sec:aerial}
+Every driving result above is measured on a domain v3 trained on and v2 did not.
+TartanAir is not: neither model has trained on aerial imagery, which makes it the
+only clean head-to-head in this study. The same 40 held-out pairs are scored at
+the full frame and at six crop margins.
+
+\begin{center}
+\small
+\begin{tabular}{lrr}
+\toprule
+Crop margin & NeuFlow v2 & NeuFlow v3 \\
+\midrule
+Full frame & 0.781 & \textbf{0.777} \\
+0\,px & 1.205 & \textbf{1.176} \\
+8\,px & 0.901 & \textbf{0.881} \\
+16\,px & 0.872 & \textbf{0.865} \\
+24\,px & 0.879 & \textbf{0.854} \\
+32\,px & 0.834 & \textbf{0.814} \\
+64\,px & 0.793 & \textbf{0.778} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+v3 records the lower mean end-point error at every one of the seven settings. The
+differences are small and worth sizing out loud: they run from 0.004 to 0.029\px,
+on 40 pairs and a single seed, so no individual difference is meaningful. What
+makes the table worth showing is that the direction repeats across seven
+independent settings.
+
+My explanation is a hypothesis rather than a finding: v3 trained on three datasets
+where v2 trained on one, and a bounded decoder degrades more gracefully on
+unfamiliar input because it cannot leave the locally supported motion range
+whatever the network predicts. It is also not uniformly better. On large-motion
+failures v3 is worse, 7.2\% against 6.5\%. Forty pairs on one seed is a consistent
+signal, not a reversal of the accuracy result in Section~\ref{sec:accuracy}.
 
 \subsection{Interactive tool}
 A PyQt application loads a video, steps frame by frame, and computes flow for a
@@ -431,11 +531,12 @@ value, and when 2.6\% of mean accuracy is an acceptable price for those.
 2.6\% on mean error and 1.5 points of 1-pixel accuracy at best, 7.6\% on the
 like-for-like comparison. I know the cause: the decoder's finest input is at $1/8$
 resolution, so the evidence it sees barely changes inside an $8\times8$ cell, while
-v2's upsampler reads the full-resolution frame directly. Adding a Fourier
-positional encoding of the sub-cell offset changed nothing, which rules out missing
-positional signal and points at missing high-resolution features.
-Section~\ref{sec:next} item~1
-is the proposed fix.
+v2's upsampler reads the full-resolution frame directly. Three independent
+experiments converge on that same mechanism. A Fourier positional encoding of the
+sub-cell offset returned null, which rules out a missing positional signal. Sub-pixel
+querying gains very little. Querying below the input sampling rate matches bilinear
+interpolation exactly. That convergence is what makes the resolution ceiling a
+diagnosis rather than a suspicion. It is diagnosed and unfixed in this work.
 
 The same limitation means sub-pixel querying is currently closer to interpolation
 than to genuine sub-pixel inference: queries within one $8\times8$ cell see nearly
@@ -444,10 +545,13 @@ information it can return between pixels is small until the decoder sees
 full-resolution features.
 
 \textbf{No embedded measurement.} Every latency figure is from a laptop RTX 4060. The
-edge claim is a design target, not a result.
+edge claim is a design target, not a result. The region speedup is hardware
+dependent for the same reason: a small region becomes launch-overhead bound on a
+larger accelerator. The accuracy cost of a region is not hardware dependent.
 
-\textbf{One evaluation domain.} VKITTI2 is synthetic driving footage. It says
-little about field or survey imagery.
+\textbf{One primary evaluation domain.} VKITTI2 is synthetic driving footage, and
+it says little on its own about field or survey imagery. The 40 aerial TartanAir
+pairs answer that only partly.
 
 \textbf{Statistical resolution.} One seed per configuration, with
 checkpoint-to-checkpoint variation up to 0.038\px. Differences below about
@@ -455,22 +559,25 @@ checkpoint-to-checkpoint variation up to 0.038\px. Differences below about
 
 \section{Next}
 \label{sec:next}
+Ordered by what each item settles, not by how much work it takes.
+
 \begin{enumerate}
-\item \textbf{Full-resolution stem.} Give the decoder a cheap full-resolution
-      feature map, estimated 1 to 2\ms. This attacks the precision limitation
-      directly and makes sub-pixel querying substantive rather than
-      interpolative.
-\item \textbf{Re-run with frozen statistics}, removing the confound in
-      Section~\ref{sec:results} and restoring out-of-domain robustness.
-\item \textbf{Decode-path optimisation.} Decode cost is flat in the query count. CUDA graph
-      capture, fusing the three samplers that share coordinates, and
-      \texttt{torch.compile} (measured at 9\% on the coarse pass) together project
-      a first query below v2's latency.
-\item \textbf{Spring high-resolution evaluation}, testing output above the input
-      sampling rate. Blocked on item 2.
-\item \textbf{Jetson measurement}, which converts the edge claim into a result or
-      refutes it.
-\item \textbf{Registration on field imagery}, testing the intended application.
+\item \textbf{Embedded measurement on a Jetson.} Converts the edge claim into a
+      result, or refutes it. Nothing else in this work depends on the measurement
+      platform the way this does.
+\item \textbf{A second seed per configuration}, one training run each. Three of
+      the four configurations currently sit inside the noise floor and cannot be
+      ranked. A second seed is what would allow ranking them honestly.
+\item \textbf{Evaluation above the input sampling rate.} Query at $2\times$
+      resolution against native 4K ground truth. The script exists and runs
+      today. This is the one test v2 structurally cannot take, because the
+      question cannot be posed to it.
+\item \textbf{Tiled refinement.} Refinement is 60\% of runtime and all of its
+      operations are local, so it should run on region tiles with a halo, and the
+      measured halo decay indicates no retraining is needed. Estimated
+      2$\times$. This is not a v3 contribution: it would benefit v2 equally.
+\item \textbf{Registration on field and survey imagery}, which tests the intended
+      application and addresses the single-domain limitation directly.
 \end{enumerate}
 
 \begingroup
@@ -576,10 +683,12 @@ Vision and Pattern Recognition (CVPR)}, 2021.
 \vspace{6pt}
 {\color{rule}\hrule}
 \vspace{4pt}
-{\footnotesize\color{muted}
+{\footnotesize\color{muted}\raggedright
 Code, training configurations and the full development record:
 \texttt{github.com/shrirag10/Neuflowv3}. Every number here is reproducible from
-\texttt{scripts/eval\_all\_runs.py}, \texttt{scripts/benchmark\_sparse.py} and
-\texttt{scripts/eval\_calibration.py}.}
+\texttt{scripts/eval\_all\_runs.py}, \texttt{scripts/benchmark\_sparse.py},
+\texttt{scripts/eval\_calibration.py}, \texttt{scripts/eval\_roi\_crop.py} and
+\texttt{scripts/bench\_scenarios.py}. Full parameter provenance is in
+\texttt{docs/base\_parameters.md}.\par}
 
 \end{document}
