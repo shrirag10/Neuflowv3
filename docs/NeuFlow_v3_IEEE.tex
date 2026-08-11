@@ -13,7 +13,7 @@
 
 \begin{document}
 
-\title{NeuFlow v3: Queryable Optical Flow with\\ Calibrated Uncertainty for
+\title{NeuFlow v3: Queried Optical Flow with\\ Calibrated Uncertainty for
 Region-Directed Perception}
 
 \author{\IEEEauthorblockN{Shriman Raghav Srinivasan}
@@ -25,32 +25,31 @@ Boston, MA, USA}}
 
 \begin{abstract}
 Optical flow networks emit a dense displacement field at a single fixed
-resolution. Many consumers of flow, including image registration, sparse
-tracking and survey mosaicking, require a few hundred correspondences at
-locations they select rather than a value at every pixel. We present NeuFlow v3,
-which retains the NeuFlow v2 pipeline through its coarse flow stage and replaces
-only the final convex upsampler with an implicit decoder evaluated at arbitrary
-continuous coordinates. We pursue three objectives: queryable output, so cost
-scales with the number of queries, $O(N)$, rather than with image area,
-$O(H{\times}W)$; cheap repeatability, so a frame pair is processed once and every
-subsequent query is answered from cached state at 1.25\ms\ against 33.3\ms, a
-factor of $27$; and calibrated confidence, a per-query error scale the baseline
-cannot express at all. The decoder is 745{,}226 parameters, 38\% of the stage it
-replaces, and the complete model is 13.3\% smaller than the baseline. On held-out
-driving sequences it is 2.6\% less accurate on mean end-point error. The
-confidence signal is the more consequential capability: ranking queries by
-predicted error lets the model abstain on its least confident 20\%, reducing mean
-error over the remaining 80\% of the frame to 1.06\px, a selection the baseline
-cannot make at any threshold since it emits flow alone. We further
-characterise region-directed inference for fast-moving platforms, showing that
-the context margin a cropped region requires is set by inter-frame displacement
-rather than image size, a relation we verify at two motion scales differing by a
-factor of three.
+resolution on every call and retain no state between calls. Many consumers of
+flow, including image registration, sparse tracking and survey mosaicking, need a
+few hundred correspondences at locations they select rather than a value at every
+pixel, and a platform on a millisecond budget can afford neither the full field
+nor its recomputation. We present NeuFlow v3, which retains the NeuFlow v2
+pipeline through its coarse flow stage and replaces only the final convex
+upsampler with an implicit decoder evaluated at arbitrary continuous coordinates.
+The front end remains frozen, verified identical after every run, so each
+measured difference is attributable to the new stage alone. We pursue three
+objectives. Queryable output makes cost scale with the number of points requested
+rather than with image area. Cheap repeatability lets a frame pair be processed
+once and every later query answered from cached state in 1.25 milliseconds
+against 33.3, a factor of twenty-seven. Calibrated confidence returns a per-query
+error scale the baseline cannot express. Declining the least confident fifth of
+queries reduces mean error across the remaining eighty percent of the frame to
+1.06 pixels, a selection the baseline cannot make at any threshold. The decoder
+costs 2.6 percent of mean accuracy from a model thirteen percent smaller. We
+further show that the context margin a cropped region requires is set by
+inter-frame displacement rather than image size, verified at two motion scales
+differing by a factor of three.
 \end{abstract}
 
 \begin{IEEEkeywords}
-optical flow, implicit neural representation, uncertainty estimation, edge
-computing, region of interest
+Implicit neural representations, motion estimation, optical flow, real-time
+systems, uncertainty quantification
 \end{IEEEkeywords}
 
 \section{Introduction}
@@ -114,6 +113,8 @@ comes to overlap a second object; bottom, a new object appearing in a frame
 already being processed, which the decoder answers from cached state.}
 \label{fig:scenarios}
 \end{figure*}
+
+Fig.~\ref{fig:scenarios} shows the three situations this work is measured on.
 
 \section{Related Work}
 
@@ -287,11 +288,15 @@ pair and frame level before each run. Cross-domain evaluation uses
 TartanAir~\cite{tartanair} aerial sequences, which no model in this study was
 trained on.
 
-\textbf{Training.} All runs are generated from a single template so that any two
-differ in exactly one variable: seed 1234, batch size 16, learning rate
+\textbf{Training.} All runs are generated from a single template. Optimisation is
+held fixed throughout: seed 1234, batch size 16, learning rate
 $2\times10^{-4}$ under a OneCycle schedule, loss weighting $\gamma = 0.8$,
 4{,}096 supervision queries per image, refinement schedule matching the
-evaluation configuration, 100{,}000 steps, backbone frozen throughout.
+evaluation configuration, 100{,}000 steps, backbone frozen throughout. Crop size
+follows the training stage, at $384{\times}512$, $320{\times}512$ and
+$320{\times}496$ respectively, because one crop must serve every sub-dataset in a
+mixed batch; only the uncertainty run is therefore a single-variable comparison
+against its predecessor.
 
 \textbf{Hardware.} NVIDIA RTX 4060 laptop GPU, fp16, $384{\times}1248$ input
 unless stated. Where a figure is device-dependent we report each device
@@ -307,7 +312,7 @@ which we account for what they cost and characterise region-directed inference.
 \begin{figure}[t]
 \centering
 \includegraphics[width=\columnwidth]{figures/sparse_queries.png}
-\caption{300 queries at detected corners, decoded in one call: 0.05\% of the
+\caption{300 queries at detected corners, decoded in one call: 0.06\% of the
 points a dense field would compute. Producing the same 300 answers from the
 baseline means computing 479{,}232 and discarding 478{,}932 of them.}
 \label{fig:sparse}
@@ -326,6 +331,8 @@ at $N{=}2{,}048$, being bounded by kernel launch overhead rather than arithmetic
 so 2{,}048 points cost what 800 do.
 
 \subsection{Objective 2: Cheap Repeatability}
+
+Table~\ref{tab:speed} reports latency for each access pattern.
 
 \begin{table}[t]
 \caption{Latency per frame pair}
