@@ -1,4 +1,4 @@
-# NeuFlow v3 — Queryable Optical Flow with Calibrated Uncertainty
+# NeuFlow v3 — Queried Optical Flow with Calibrated Uncertainty
 
 NeuFlow v3 replaces the fixed convex upsampler of
 [NeuFlow v2](https://github.com/neufieldrobotics/NeuFlow_v2) with an **implicit
@@ -7,9 +7,9 @@ network answers queries instead of emitting a fixed-resolution map: cost scales
 with the number of points requested, O(N), rather than with image area, O(H×W).
 
 The decoder costs accuracy: 2.384 px against v2's 2.324 px, 2.6% worse. In
-exchange it adds three things v2 cannot do at all, from a model 13% smaller: flow
-at sub-pixel coordinates, repeat queries against a cached frame at 7.7× lower
-cost, and a calibrated per-query confidence estimate. This is a priced trade, not
+exchange it adds three things v2 cannot do at all, from a model 13% smaller:
+queryable output at any continuous coordinate, repeat queries against a cached
+frame at 27× lower cost, and a calibrated per-query confidence estimate. This is a priced trade, not
 a free win.
 
 > MS Robotics thesis project · Northeastern University Field Robotics Lab
